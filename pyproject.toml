@@ -1,0 +1,123 @@
+[project]
+name = "psych-cert-gen"
+version = "0.1.0"
+description = "CE Certificate Generator — Generate individual PDF certificates from Zoom attendance and Qualtrics CE requests"
+readme = "PLAN.md"
+requires-python = ">=3.12"
+dependencies = [
+    "openpyxl>=3.1",
+    "click>=8.1",
+    "pyyaml>=6.0",
+    "pydantic>=2.0",
+    "fpdf2>=2.8.7",
+]
+
+[dependency-groups]
+dev = [
+    "basedpyright>=1.21",
+    "ruff>=0.8",
+    "pytest>=8",
+    "pytest-cov>=5",
+    "types-openpyxl>=3.1.5.20260518",
+]
+
+# ──────────────────────────────────── basedpyright ──────────────────────────────
+[tool.basedpyright]
+typeCheckingMode = "all"
+pythonVersion = "3.12"
+pythonPlatform = "All"
+include = ["src", "tests"]
+exclude = ["**/__pycache__", "**/.venv", "**/build", "**/dist"]
+
+# Strict enforcement extras
+reportUnusedCallResult = "warning"
+reportUnnecessaryTypeIgnoreComment = "error"
+reportUnusedVariable = "error"
+reportMissingParameterType = "error"
+reportMissingReturnType = "error"
+reportPrivateUsage = "error"
+
+# ──────────────────────────────────── ruff ─────────────────────────────────────
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["ALL"]
+ignore = [
+    "COM812",   # missing trailing comma (formatter conflict)
+    "ISC001",   # implicit string concat (formatter conflict)
+    "ISC003",   # explicit string concat — conflicts with basedpyright reportImplicitStringConcatenation
+    "D203",     # docstring conflict
+    "D213",     # docstring conflict
+    "CPY001",   # missing copyright notice
+    "FBT001",   # boolean positional arg
+    "FBT002",   # boolean positional default
+    "TD002",    # missing TODO author
+    "TD003",    # missing TODO link
+    "FIX002",   # line contains TODO
+]
+fixable = ["ALL"]
+unfixable = []
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**/*.py" = [
+    "S101",     # assert is pytest
+    "ARG",      # unused args (fixtures)
+    "PLR2004",  # magic numbers in test data
+    "SLF001",   # tests access private members
+    "D",        # docstrings not required in tests
+]
+"scripts/**/*.py" = [
+    "T201",     # print allowed in scripts
+    "INP001",   # implicit namespace package
+]
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
+[tool.ruff.lint.flake8-bugbear]
+extend-immutable-calls = [
+    "click.Argument",
+    "click.Option",
+    "click.argument",
+    "click.option",
+    "typer.Argument",
+    "typer.Option",
+    "fastapi.Depends",
+    "fastapi.Query",
+    "fastapi.Body",
+    "fastapi.Header",
+]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+docstring-code-format = true
+docstring-code-line-length = "dynamic"
+
+# ──────────────────────────────────── pytest ───────────────────────────────────
+[tool.pytest.ini_options]
+minversion = "8.0"
+testpaths = ["tests"]
+addopts = [
+    "-ra",
+    "--strict-config",
+    "--strict-markers",
+]
+filterwarnings = ["error"]
+
+# ──────────────────────────────────── coverage ─────────────────────────────────
+[tool.coverage.run]
+source = ["src"]
+branch = true
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "if TYPE_CHECKING:",
+    "if typing.TYPE_CHECKING:",
+    "raise NotImplementedError",
+    "@(abc\\.)?abstractmethod",
+]
