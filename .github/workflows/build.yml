@@ -13,7 +13,7 @@ concurrency:
 
 env:
   PYTHONUNBUFFERED: "1"
-  ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION: "true"
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
 
 jobs:
   build:
@@ -95,7 +95,8 @@ jobs:
             libgtk-3-dev \
             libayatana-appindicator3-dev \
             libjavascriptcoregtk-4.1-dev \
-            libsoup-3.0-dev
+            libsoup-3.0-dev \
+            libfuse2
 
       # ── Python deps + tests ─────────────────────────────────────
       - name: Install Python deps
