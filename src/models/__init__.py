@@ -21,6 +21,7 @@ from src.models.participant import (
     extract_name_tokens,
     normalize_name,
 )
+from src.models.session import SessionConfig
 from src.models.training import CEType, TrainingConfigError, TrainingMetadata
 
 __all__ = [
@@ -37,6 +38,7 @@ __all__ = [
     "Minutes",
     "ParticipantAttendance",
     "ParticipantDataError",
+    "SessionConfig",
     "TrainingConfigError",
     "TrainingMetadata",
     "extract_name_tokens",

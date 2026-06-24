@@ -1,7 +1,7 @@
 # Python-generated files
 __pycache__/
 *.py[oc]
-build/
+build/psych-cert-gen/
 dist/
 wheels/
 *.egg-info
@@ -12,14 +12,42 @@ wheels/
 # Generated output
 output/
 
+# Sample data (gitignored — contains real PII)
+input/
+
 # OS files
 .DS_Store
 
 # Auto-generated
 main.py
 
+# Tauri external binaries + build cache
+src-tauri/bin/
+src-tauri/target/
+
 # Debug logs
 mcp-debug.log
 
 # OpenCode internal
 .omo/
+
+# Node / Frontend
+node_modules
+ui/dist
+*.local
+
+# Logs
+logs
+*.log
+npm-debug.log*
+pnpm-debug.log*
+
+# Editor directories and files
+.vscode/*
+!.vscode/extensions.json
+.idea
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
