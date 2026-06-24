@@ -8,8 +8,6 @@ Built for the GSAPP Psychology Department at Rutgers.
 
 ## What it does
 
-You run one command. It:
-
 1. Reads your Zoom attendance report (who showed up, when they joined/left)
 2. Reads your Qualtrics CE request survey (who wants which CE credits)
 3. Matches people across both files by name
@@ -21,45 +19,33 @@ You run one command. It:
 
 ---
 
-## What you need
+## Desktop App (recommended)
 
-| File | Where it comes from |
-|------|-------------------|
-| Zoom attendance report | Zoom → Reports → Usage → Meeting → Export as Excel |
-| Qualtrics CE survey export | Qualtrics → Data & Analysis → Export → Excel |
-| Training details | Title, date, instructor, CE types offered, session start/end time |
+Download the latest installer from [Releases](https://github.com/ks1686/psych-cert-automator/releases):
 
----
+| Platform | Download |
+|----------|----------|
+| macOS | `.dmg` file — drag to Applications |
+| Windows | `.msi` file — double-click to install |
+| Linux | `.AppImage` file — `chmod +x` then run |
 
-## Example output
+The app is self-contained — no Python, Node, or other dependencies needed. Works fully offline.
 
-### Certificate (PDF)
-A landscape certificate with the recipient's name, CE type and credits, training title, date, instructor, and signature block.
+> **macOS note**: On first launch, right-click the app and select "Open" (Gatekeeper workaround for unsigned apps).
 
-Filename: `Benas_Jessica_APA_2026-03-20.pdf`
+## CLI (for automation / scripts)
 
-### Ineligibility Report (Excel)
-A spreadsheet listing anyone who didn't get a certificate and why:
-- Name not found in Zoom attendance
-- Name matched multiple Zoom attendees (ambiguous)
-- Didn't meet attendance requirements (late join, early leave, or excessive gaps)
+### One-time setup
 
----
+```bash
+# Prerequisites: Python 3.12+, uv
+pip install uv
+git clone https://github.com/ks1686/psych-cert-automator.git
+cd psych-cert-automator
+uv sync
+```
 
-## Getting started
-
-### One-time setup (ask IT or a tech-savvy colleague)
-
-1. Install Python 3.12+: https://www.python.org/downloads/
-2. Open Terminal and run:
-   ```
-   pip install uv
-   git clone https://github.com/ks1686/psych-cert-automator.git
-   cd psych-cert-automator
-   uv sync
-   ```
-
-### Every time you need certificates
+### Usage
 
 ```
 uv run python certgen.py \
@@ -75,11 +61,77 @@ uv run python certgen.py \
   --output-dir "./output"
 ```
 
-Replace the values with your training's details. Certificates appear in the `output` folder.
+---
+
+## Development
+
+### Prerequisites
+
+| Tool | Version | Install |
+|------|---------|---------|
+| **Python** | 3.12+ | [python.org](https://www.python.org/downloads/) |
+| **uv** | latest | `pip install uv` |
+| **Rust** | 1.80+ | `curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \| sh` |
+| **Bun** | 1.3+ | `curl -fsSL https://bun.sh/install \| bash` |
+
+> **Node.js package management uses Bun**, not npm or pnpm. `bun install`, `bun run build`, etc.
+
+### Setup
+
+```bash
+git clone https://github.com/ks1686/psych-cert-automator.git
+cd psych-cert-automator
+
+# Python backend
+uv sync
+
+# Frontend + Tauri
+bun install
+```
+
+### Run locally
+
+```bash
+# Terminal 1 — Python backend (http://localhost:8008)
+uv run python src/backends/main.py
+
+# Terminal 2 — Tauri desktop app (hot-reload)
+bun run tauri dev
+```
+
+### Testing
+
+```bash
+uv run pytest                    # Python unit tests (23)
+bun run build                    # TypeScript type-check + Vite build
+cargo check --manifest-path src-tauri/Cargo.toml  # Rust compilation
+bun run test:e2e                 # Playwright e2e (requires Tauri running)
+```
+
+### Build for distribution
+
+```bash
+# Build Python sidecar
+uv run python build/build.py
+
+# Build Tauri installer for current platform
+bun run tauri build
+# → src-tauri/target/release/bundle/  (.dmg / .msi / .AppImage)
+```
+
+### Release
+
+```bash
+# Bump version in pyproject.toml, src-tauri/tauri.conf.json, package.json
+git add pyproject.toml src-tauri/tauri.conf.json package.json
+git commit -m "release: vX.Y.Z"
+git tag -a vX.Y.Z -m "vX.Y.Z"
+git push origin main --tags
+# CI builds all 4 platforms and creates a GitHub Release automatically
+```
 
 ---
 
 ## Questions?
 
-For technical questions about how this works, see [PLAN.md](PLAN.md).
-For department-specific questions (CE requirements, templates, etc.), ask your program coordinator.
+For technical details see [PLAN.md](PLAN.md). For department-specific questions, ask your program coordinator.

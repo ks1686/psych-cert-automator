@@ -6,16 +6,16 @@ Playwright end-to-end tests for the Psych Cert Gen Tauri application.
 
 ```sh
 # 1. Install dependencies (first time only)
-pnpm install
+bun install
 
 # 2. Start the FastAPI backend
 uv run uvicorn certgen:app --port 8008
 
 # 3. Start the Tauri app in dev mode (separate terminal)
-pnpm tauri dev
+bun run tauri dev
 
 # 4. Run the tests
-pnpm test:e2e
+bun run test:e2e
 ```
 
 ## Test Scenarios
@@ -50,4 +50,4 @@ application process, so no `webServer` block is needed.
 - Use `page.getByText()` for text content assertions.
 - Avoid `page.waitForTimeout()` — use `expect().toBeVisible()` or
   `page.waitForSelector()` instead.
-- Run with `--debug` for headed mode: `pnpm test:e2e --debug`
+- Run with `--debug` for headed mode: `bun run test:e2e --debug`
