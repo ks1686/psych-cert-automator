@@ -118,11 +118,11 @@ jobs:
       # ── Frontend ────────────────────────────────────────────────
       - name: Install frontend deps
         timeout-minutes: 5
-          run: bun install --frozen-lockfile
+        run: bun install --frozen-lockfile
 
       - name: Build frontend
         timeout-minutes: 5
-          run: bun run build
+        run: bun run build
 
       # ── Tauri build ─────────────────────────────────────────────
       - name: Build Tauri
