@@ -18,8 +18,8 @@ input/
 # OS files
 .DS_Store
 
-# Auto-generated
-main.py
+# Auto-generated (root-level only)
+/main.py
 
 # Tauri external binaries + build cache
 src-tauri/bin/
