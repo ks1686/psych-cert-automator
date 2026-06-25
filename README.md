@@ -27,7 +27,7 @@ Download the latest installer from [Releases](https://github.com/ks1686/psych-ce
 |----------|----------|
 | macOS | `.dmg` file — drag to Applications |
 | Windows | `.msi` file — double-click to install |
-| Linux | `.AppImage` file — `chmod +x` then run |
+| Linux | `.deb` file — install with your system package manager |
 
 The app is self-contained — no Python, Node, or other dependencies needed. Works fully offline.
 
@@ -116,7 +116,7 @@ uv run python build/build.py
 
 # Build Tauri installer for current platform
 bun run tauri build
-# → src-tauri/target/release/bundle/  (.dmg / .msi / .AppImage)
+# → src-tauri/target/release/bundle/  (.dmg / .msi / .deb)
 ```
 
 ### Release
@@ -127,7 +127,8 @@ git add pyproject.toml src-tauri/tauri.conf.json package.json
 git commit -m "release: vX.Y.Z"
 git tag -a vX.Y.Z -m "vX.Y.Z"
 git push origin main --tags
-# CI builds all 4 platforms and creates a GitHub Release automatically
+# CI builds macOS arm64, Windows x64, and Linux x64 installers,
+# then creates a GitHub Release automatically
 ```
 
 ---

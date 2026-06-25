@@ -5,11 +5,11 @@
  * Review Matches → Generate) plus startup, session persistence, and dark mode.
  *
  * All tests assume:
- * - The Tauri app is running (pnpm tauri dev)
+ * - The Tauri app is running (bun run tauri dev)
  * - The FastAPI backend is running on http://localhost:8008
  * - The Vite dev server is available at http://localhost:1420
  *
- * Run with: pnpm test:e2e
+ * Run with: bun run test:e2e
  */
 import { test, expect } from "@playwright/test";
 
@@ -46,7 +46,19 @@ async function expectStepNumber(
     "Generate",
   ];
   const label = stepLabels[step - 1];
-  await expect(page.getByText(label)).toBeVisible();
+  await expect(
+    page.getByRole("navigation").getByText(label, { exact: true }),
+  ).toBeVisible();
+}
+
+async function getMainBackgroundColor(
+  page: import("@playwright/test").Page,
+): Promise<string> {
+  return page.evaluate(() => {
+    const main = document.querySelector("main");
+    if (!main) return "";
+    return window.getComputedStyle(main).backgroundColor;
+  });
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -537,6 +549,8 @@ test.describe("Scenario 7: Dark mode toggle", () => {
       document.documentElement.classList.contains("dark"),
     );
     expect(hasDarkInitially).toBe(false);
+    const bgColorLightBefore = await getMainBackgroundColor(page);
+    expect(bgColorLightBefore).not.toBe("");
 
     // ── Enable dark mode ─────────────────────────────────────────────────
     // The app uses Tailwind v4's class-based dark mode via
@@ -555,14 +569,9 @@ test.describe("Scenario 7: Dark mode toggle", () => {
     // Verify dark mode styles are active by checking computed background.
     // The `bg-background` utility resolves to `var(--background)` which
     // changes from `oklch(1 0 0)` (white) to `oklch(0.145 0 0)` (near-black).
-    const bgColor = await page.evaluate(() => {
-      const main = document.querySelector("main");
-      if (!main) return "";
-      return window.getComputedStyle(main).backgroundColor;
-    });
+    const bgColor = await getMainBackgroundColor(page);
 
-    // In dark mode the background should NOT be white (oklch(1 0 0) ≈ white)
-    expect(bgColor).not.toBe("rgb(255, 255, 255)");
+    expect(bgColor).not.toBe(bgColorLightBefore);
 
     // ── Disable dark mode ────────────────────────────────────────────────
     await page.evaluate(() => {
@@ -575,14 +584,9 @@ test.describe("Scenario 7: Dark mode toggle", () => {
     expect(hasDarkRemoved).toBe(false);
 
     // Verify light mode background is restored
-    const bgColorLight = await page.evaluate(() => {
-      const main = document.querySelector("main");
-      if (!main) return "";
-      return window.getComputedStyle(main).backgroundColor;
-    });
+    const bgColorLight = await getMainBackgroundColor(page);
 
-    // In light mode, the background should be white
-    expect(bgColorLight).toBe("rgb(255, 255, 255)");
+    expect(bgColorLight).toBe(bgColorLightBefore);
   });
 });
 

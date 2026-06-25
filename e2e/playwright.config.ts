@@ -7,17 +7,17 @@ import { defineConfig } from "@playwright/test";
  *
  * 1. Start the Tauri app in dev mode:
  *    ```sh
- *    pnpm tauri dev
+ *    bun run tauri dev
  *    ```
  *
  * 2. Start the FastAPI backend:
  *    ```sh
- *    uv run uvicorn certgen:app --port 8008
+ *    uv run python src/backends/main.py
  *    ```
  *
  * 3. Run the tests:
  *    ```sh
- *    pnpm test:e2e
+ *    bun run test:e2e
  *    ```
  *
  * ## Tauri WebDriver mode (recommended for CI)
@@ -36,7 +36,7 @@ import { defineConfig } from "@playwright/test";
  */
 export default defineConfig({
   /** Directory containing test spec files */
-  testDir: "./e2e",
+  testDir: ".",
 
   /** Per-test timeout (60 seconds) */
   timeout: 60_000,
@@ -61,7 +61,7 @@ export default defineConfig({
   /**
    * Tauri manages its own application process (both the Rust backend and
    * the webview). No `webServer` block is needed — the app must already
-   * be running before `pnpm test:e2e` is invoked.
+   * be running before `bun run test:e2e` is invoked.
    *
    * If you prefer Playwright to launch Tauri automatically, create a
    * `globalSetup` script at `e2e/global-setup.ts`.

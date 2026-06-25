@@ -247,10 +247,9 @@ export default function StepUpload({
       <CardContent className="space-y-6">
         {/* ── File picker: Zoom ─────────────────────────────────────────── */}
         <div className="space-y-2">
-          <Label htmlFor="zoom-file">Zoom Attendance Report</Label>
+          <Label>Zoom Attendance Report</Label>
           <div className="flex items-center gap-3">
             <Button
-              id="zoom-file"
               variant="outline"
               onClick={handleSelectZoom}
               type="button"
@@ -275,10 +274,9 @@ export default function StepUpload({
 
         {/* ── File picker: Qualtrics ────────────────────────────────────── */}
         <div className="space-y-2">
-          <Label htmlFor="qualtrics-file">Qualtrics CE Survey</Label>
+          <Label>Qualtrics CE Survey</Label>
           <div className="flex items-center gap-3">
             <Button
-              id="qualtrics-file"
               variant="outline"
               onClick={handleSelectQualtrics}
               type="button"

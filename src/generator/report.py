@@ -79,6 +79,7 @@ _FILL_INSUFFICIENT = PatternFill(start_color="F4B942", end_color="F4B942", fill_
 # Sheet names
 _INELIGIBLE_SHEET = "Ineligible"
 _SUMMARY_SHEET = "Summary"
+_FORMULA_PREFIXES = ("=", "+", "-", "@")
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -110,6 +111,12 @@ def _blank(value: int | None) -> int:
     return value if value is not None else 0
 
 
+def _xlsx_text(value: str) -> str:
+    if value.startswith(_FORMULA_PREFIXES):
+        return f"'{value}"
+    return value
+
+
 def _build_data_row(entry: IneligibilityEntry) -> list[str | int]:
     """Build a single data row for the ineligibility sheet.
 
@@ -125,16 +132,16 @@ def _build_data_row(entry: IneligibilityEntry) -> list[str | int]:
         + _blank(entry.total_gaps_minutes)
     )
     return [
-        entry.name_qualtrics,
-        entry.name_zoom or "",
-        entry.match_status,
+        _xlsx_text(entry.name_qualtrics),
+        _xlsx_text(entry.name_zoom or ""),
+        _xlsx_text(entry.match_status),
         entry.late_join_minutes if entry.late_join_minutes is not None else "",
         entry.early_leave_minutes if entry.early_leave_minutes is not None else "",
         entry.total_gaps_minutes if entry.total_gaps_minutes is not None else "",
         total_missed if total_missed > 0 else "",
-        ", ".join(entry.rejected_ce_types),
-        entry.status.value,
-        entry.reason,
+        _xlsx_text(", ".join(entry.rejected_ce_types)),
+        _xlsx_text(entry.status.value),
+        _xlsx_text(entry.reason),
     ]
 
 

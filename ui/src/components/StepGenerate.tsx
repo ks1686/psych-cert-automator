@@ -31,6 +31,7 @@ import {
 } from "@/components/ui/table";
 import { PdfPreview } from "@/components/PdfPreview";
 import type { MatchData } from "@/components/StepMatchReview";
+import type { UploadData } from "@/components/StepUpload";
 
 // ── Wire types ──────────────────────────────────────────────────────────────
 
@@ -48,6 +49,7 @@ export interface CertificateResult {
   name: string;
   ce_type: string;
   filename: string;
+  path: string;
 }
 
 export interface IneligibleResult {
@@ -107,6 +109,7 @@ interface StepGenerateProps {
   onReset: () => void;
   matchData: MatchData;
   trainingMetadata: TrainingMetadata;
+  uploadData: UploadData;
 }
 
 // ── Constants ───────────────────────────────────────────────────────────────
@@ -186,6 +189,7 @@ export default function StepGenerate({
   onReset,
   matchData,
   trainingMetadata,
+  uploadData,
 }: StepGenerateProps) {
   // ── Derived data ────────────────────────────────────────────────────────
 
@@ -247,15 +251,13 @@ export default function StepGenerate({
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          training: trainingMetadata,
-          entry: {
-            qualtrics_name: first.qualtrics_name,
-            zoom_name: first.zoom_name,
-            ce_type: first.ce_type,
-            name_on_certificate: first.name_on_certificate,
-            email: first.email,
-            license_number: first.license_number,
-          },
+          full_name: first.name_on_certificate,
+          ce_type: first.ce_type,
+          ce_credits: trainingMetadata.ce_credits,
+          training_title: trainingMetadata.title,
+          training_date: trainingMetadata.date,
+          instructor_name: trainingMetadata.instructor_name,
+          license_number: first.license_number,
         }),
       });
 
@@ -294,15 +296,20 @@ export default function StepGenerate({
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          training: trainingMetadata,
-          certificates: eligibleEntries.map((e) => ({
-            qualtrics_name: e.qualtrics_name,
-            zoom_name: e.zoom_name,
-            ce_type: e.ce_type,
-            name_on_certificate: e.name_on_certificate,
-            email: e.email,
-            license_number: e.license_number,
-          })),
+          zoom_path: uploadData.zoomPath,
+          qualtrics_path: uploadData.qualtricsPath,
+          title: trainingMetadata.title,
+          training_date: trainingMetadata.date,
+          instructor: trainingMetadata.instructor_name,
+          ce_credits: trainingMetadata.ce_credits,
+          ce_types: trainingMetadata.ce_types_offered,
+          start_time: trainingMetadata.session_start,
+          end_time: trainingMetadata.session_end,
+          overrides:
+            Object.keys(matchData.overrides).length > 0
+              ? matchData.overrides
+              : undefined,
+          output_dir: "./output",
         }),
       });
 
@@ -376,7 +383,7 @@ export default function StepGenerate({
       setPhase("initial");
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [eligibleEntries, trainingMetadata]);
+  }, [eligibleEntries, matchData.overrides, trainingMetadata, uploadData]);
 
   // SSE event handler (defined inside component so it can close over setters)
   function handleSSEEvent(event: SSEEvent) {
@@ -416,12 +423,12 @@ export default function StepGenerate({
 
   const handleDownloadZip = useCallback(async () => {
     try {
-      const filenames = certificates.map((c) => c.filename);
+      const pdfPaths = certificates.map((c) => c.path);
 
       const response = await fetch(`${API_BASE}/api/download-zip`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ files: filenames }),
+        body: JSON.stringify({ pdf_paths: pdfPaths }),
       });
 
       if (!response.ok) {
@@ -679,7 +686,7 @@ export default function StepGenerate({
                           <TableCell>
                             <Button variant="ghost" size="sm" asChild>
                               <a
-                                href={`${API_BASE}/api/pdf/${encodeURIComponent(cert.filename)}`}
+                                href={`${API_BASE}/api/pdf?path=${encodeURIComponent(cert.path)}`}
                                 target="_blank"
                                 rel="noopener noreferrer"
                               >
