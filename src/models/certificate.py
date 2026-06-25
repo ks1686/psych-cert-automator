@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from enum import StrEnum, unique
 from typing import TYPE_CHECKING
@@ -13,6 +14,12 @@ if TYPE_CHECKING:
 
 _NAME_PARTS_COUNT = 2
 """Number of parts expected when splitting a full name into first/last."""
+_UNSAFE_FILENAME_CHARS = re.compile(r"[^A-Za-z0-9_-]+")
+
+
+def _filename_part(value: str) -> str:
+    cleaned = _UNSAFE_FILENAME_CHARS.sub("_", value.strip())
+    return cleaned.strip("_") or "certificate"
 
 
 @dataclass(frozen=True, slots=True)
@@ -77,7 +84,13 @@ class CertificateOutput:
         else:
             first, last = "", parts[0]
         date_str = self.training_date.isoformat()
-        return f"{last}_{first}_{self.ce_type}_{date_str}.pdf"
+        filename_parts = [
+            _filename_part(last),
+            _filename_part(first),
+            _filename_part(str(self.ce_type)),
+            date_str,
+        ]
+        return "_".join(filename_parts) + ".pdf"
 
 
 @unique

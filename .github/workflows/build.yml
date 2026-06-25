@@ -178,7 +178,10 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           name: ${{ github.ref_name }}
-          files: artifacts/*
+          files: |
+            artifacts/**/*.dmg
+            artifacts/**/*.msi
+            artifacts/**/*.deb
           generate_release_notes: true
           draft: false
           prerelease: false

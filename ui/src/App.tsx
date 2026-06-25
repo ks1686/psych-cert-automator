@@ -76,7 +76,6 @@ const API_BASE = "http://localhost:8008";
 /** Derive TrainingMetadata from Step 1 + Step 2 data. */
 function deriveTrainingMetadata(
   metadata: MetadataFormData,
-  uploadData: UploadData,
 ): TrainingMetadata {
   const ceTypes: string[] = [];
   if (metadata.ceTypes.apa) ceTypes.push("APA");
@@ -89,8 +88,8 @@ function deriveTrainingMetadata(
     instructor_name: metadata.instructor,
     ce_credits: metadata.ceCredits,
     ce_types_offered: ceTypes,
-    session_start: uploadData.sessionStart,
-    session_end: uploadData.sessionEnd,
+    session_start: metadata.startTime,
+    session_end: metadata.endTime,
   };
 }
 
@@ -328,6 +327,8 @@ function WizardApp() {
         body: JSON.stringify({
           zoom_participants: participants,
           ce_requests: requests,
+          session_start: data.sessionStart,
+          session_end: data.sessionEnd,
         }),
       });
 
@@ -343,6 +344,8 @@ function WizardApp() {
         overrides: {},
         zoomParticipants: participants,
         ceRequests: requests,
+        sessionStart: data.sessionStart,
+        sessionEnd: data.sessionEnd,
       };
 
       setWizardState((prev) => ({ ...prev, matchData }));
@@ -364,7 +367,7 @@ function WizardApp() {
     setWizardState((prev) => {
       const { metadata, uploadData } = prev;
       if (!metadata || !uploadData) return prev;
-      const trainingMetadata = deriveTrainingMetadata(metadata, uploadData);
+      const trainingMetadata = deriveTrainingMetadata(metadata);
       return { ...prev, matchData: data, trainingMetadata };
     });
     setStep(4);
@@ -477,12 +480,16 @@ function WizardApp() {
             />
           )}
 
-          {step === 4 && wizardState.matchData && wizardState.trainingMetadata && (
+          {step === 4 &&
+            wizardState.matchData &&
+            wizardState.trainingMetadata &&
+            wizardState.uploadData && (
             <StepGenerate
               onBack={goBack}
               onReset={resetWizard}
               matchData={wizardState.matchData}
               trainingMetadata={wizardState.trainingMetadata}
+              uploadData={wizardState.uploadData}
             />
           )}
         </div>

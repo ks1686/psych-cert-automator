@@ -73,6 +73,7 @@ def run_pipeline(  # noqa: PLR0913
     start_time: time,
     end_time: time,
     *,
+    overrides: dict[str, str] | None = None,
     overrides_path: str | None = None,
     output_dir: str = "./output",
 ) -> PipelineResult:
@@ -92,6 +93,7 @@ def run_pipeline(  # noqa: PLR0913
         ce_types: Short codes for CE types offered (e.g. ``['APA', 'NASP', 'BCBA']``).
         start_time: Scheduled session start time.
         end_time: Scheduled session end time.
+        overrides: Optional in-memory mapping from Qualtrics names to Zoom names.
         overrides_path: Optional path to a two-column CSV mapping Qualtrics names
             to Zoom names for manual name matching.
         output_dir: Directory where generated PDFs and reports are written.
@@ -119,15 +121,19 @@ def run_pipeline(  # noqa: PLR0913
             )
 
         # ── Step 3: Load manual overrides ──────────────────────────────────
-        overrides: dict[str, str] | None = None
+        manual_overrides = overrides
         if overrides_path:
-            overrides = _load_override_csv(overrides_path)
+            loaded_overrides = _load_override_csv(overrides_path)
+            manual_overrides = {
+                **(manual_overrides or {}),
+                **loaded_overrides,
+            }
 
         # ── Step 4: Match names ────────────────────────────────────────────
         matches = batch_match(
             list(zoom_session.participants),
             ce_requests,
-            overrides,
+            manual_overrides,
         )
 
         # ── Steps 5-6: Validate & classify ─────────────────────────────────

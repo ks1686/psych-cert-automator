@@ -67,6 +67,8 @@ export interface MatchData {
   overrides: Record<string, string>;
   zoomParticipants: ParticipantSummary[];
   ceRequests: CERequestSummary[];
+  sessionStart: string;
+  sessionEnd: string;
 }
 
 // ── Props ───────────────────────────────────────────────────────────────────
@@ -79,7 +81,7 @@ interface StepMatchReviewProps {
 
 // ── Constants ───────────────────────────────────────────────────────────────
 
-const API_BASE = "http://localhost:8000";
+const API_BASE = "http://localhost:8008";
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -173,6 +175,8 @@ export default function StepMatchReview({
         body: JSON.stringify({
           zoom_participants: initialData.zoomParticipants,
           ce_requests: initialData.ceRequests,
+          session_start: initialData.sessionStart,
+          session_end: initialData.sessionEnd,
           overrides:
             Object.keys(overrides).length > 0 ? overrides : undefined,
         }),
@@ -192,7 +196,13 @@ export default function StepMatchReview({
     } finally {
       setIsApplying(false);
     }
-  }, [overrides, initialData.zoomParticipants, initialData.ceRequests]);
+  }, [
+    overrides,
+    initialData.zoomParticipants,
+    initialData.ceRequests,
+    initialData.sessionStart,
+    initialData.sessionEnd,
+  ]);
 
   const handleAutoMatch = useCallback(() => {
     onNext({
@@ -200,6 +210,8 @@ export default function StepMatchReview({
       overrides,
       zoomParticipants: initialData.zoomParticipants,
       ceRequests: initialData.ceRequests,
+      sessionStart: initialData.sessionStart,
+      sessionEnd: initialData.sessionEnd,
     });
   }, [matches, overrides, initialData, onNext]);
 
@@ -209,6 +221,8 @@ export default function StepMatchReview({
       overrides,
       zoomParticipants: initialData.zoomParticipants,
       ceRequests: initialData.ceRequests,
+      sessionStart: initialData.sessionStart,
+      sessionEnd: initialData.sessionEnd,
     });
   }, [matches, overrides, initialData, onNext]);
 

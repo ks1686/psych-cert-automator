@@ -1,9 +1,42 @@
 import { useEffect, useRef, useState } from "react";
 import { Loader2 } from "lucide-react";
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
+interface PdfViewport {
+  readonly height: number;
+  readonly width: number;
+}
+
+interface PdfRenderTask {
+  readonly promise: Promise<void>;
+}
+
+interface PdfPage {
+  getViewport(options: { readonly scale: number }): PdfViewport;
+  render(options: {
+    readonly canvasContext: CanvasRenderingContext2D;
+    readonly viewport: PdfViewport;
+  }): PdfRenderTask;
+}
+
+interface PdfDocument {
+  getPage(pageNumber: number): Promise<PdfPage>;
+}
+
+interface PdfLoadingTask {
+  readonly promise: Promise<PdfDocument>;
+}
+
+interface PdfJsLib {
+  readonly GlobalWorkerOptions: {
+    workerSrc: string;
+  };
+  getDocument(source: { readonly data: Uint8Array }): PdfLoadingTask;
+}
+
 declare global {
-  var pdfjsLib: any;
+  interface Window {
+    pdfjsLib?: PdfJsLib;
+  }
 }
 
 interface PdfPreviewProps {
@@ -28,15 +61,8 @@ export function PdfPreview({ pdfBytes }: PdfPreviewProps) {
 
     (async () => {
       try {
-        if (!window.pdfjsLib) {
-          await loadScript("/pdfjs/pdf.min.js");
-          if (!window.pdfjsLib) throw new Error("pdf.js failed to load");
-          window.pdfjsLib.GlobalWorkerOptions.workerSrc =
-            "/pdfjs/pdf.worker.min.js";
-        }
-
-        const pdf = await window.pdfjsLib.getDocument({ data: pdfBytes })
-          .promise;
+        const pdfJs = await ensurePdfJs();
+        const pdf = await pdfJs.getDocument({ data: pdfBytes }).promise;
         const page = await pdf.getPage(1);
         const canvas = canvasRef.current;
         if (!canvas || cancelled) return;
@@ -46,7 +72,8 @@ export function PdfPreview({ pdfBytes }: PdfPreviewProps) {
         canvas.height = viewport.height;
         canvas.width = viewport.width;
 
-        const ctx = canvas.getContext("2d")!;
+        const ctx = canvas.getContext("2d");
+        if (!ctx) throw new Error("Canvas 2D context unavailable");
         await page.render({ canvasContext: ctx, viewport }).promise;
         if (!cancelled) setStatus("ready");
       } catch {
@@ -107,4 +134,16 @@ function loadScript(src: string): Promise<void> {
     script.onerror = () => reject(new Error(`Failed to load ${src}`));
     document.head.appendChild(script);
   });
+}
+
+async function ensurePdfJs(): Promise<PdfJsLib> {
+  const existingPdfJs = window.pdfjsLib;
+  if (existingPdfJs) return existingPdfJs;
+
+  await loadScript("/pdfjs/pdf.min.js");
+  const loadedPdfJs = window.pdfjsLib;
+  if (!loadedPdfJs) throw new Error("pdf.js failed to load");
+
+  loadedPdfJs.GlobalWorkerOptions.workerSrc = "/pdfjs/pdf.worker.min.js";
+  return loadedPdfJs;
 }

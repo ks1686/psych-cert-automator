@@ -14,6 +14,7 @@ from __future__ import annotations
 import asyncio
 import io
 import json
+import secrets
 import zipfile
 from datetime import date, datetime, time, timezone
 from pathlib import Path
@@ -23,7 +24,7 @@ if TYPE_CHECKING:
     from collections.abc import AsyncGenerator
 
 from fastapi import APIRouter, HTTPException
-from fastapi.responses import StreamingResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from fpdf import FPDF
 from pydantic import BaseModel
 
@@ -33,11 +34,14 @@ from src.models.certificate import (
     MatchNotFound,
     MatchSuccess,
 )
+from src.models.participant import AttendanceRecord, ParticipantAttendance
 from src.parser.qualtrics import parse_qualtrics_export
 from src.parser.zoom import ZoomParseError, parse_zoom_attendance
 from src.pipeline import PipelineResult, run_pipeline
+from src.validator.attendance import validate_attendance
 
 router = APIRouter()
+_GENERATED_PDFS: dict[str, Path] = {}
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -85,7 +89,11 @@ class ParseResponse(BaseModel):
 class MatchParticipantBrief(BaseModel):
     """Minimal Zoom participant entry for the match endpoint."""
 
-    name_raw: str
+    name: str
+    first_join: datetime
+    last_leave: datetime
+    total_attended_minutes: int
+    segments_count: int
 
 
 class MatchCERequestBrief(BaseModel):
@@ -103,17 +111,19 @@ class MatchRequest(BaseModel):
     zoom_participants: list[MatchParticipantBrief]
     ce_requests: list[MatchCERequestBrief]
     overrides: dict[str, str] | None = None
+    session_start: datetime | None = None
+    session_end: datetime | None = None
 
 
 class MatchEntry(BaseModel):
     """One match outcome serialised for the API response."""
 
+    kind: str  # "success" | "ambiguous" | "not_found"
     qualtrics_name: str
-    ce_type: str
-    match_kind: str  # "success" | "ambiguous" | "not_found"
-    matched_name: str | None = None
+    zoom_name: str | None = None
     confidence: float | None = None
     candidates: list[str] | None = None
+    attendance: dict[str, object] | None = None
 
 
 class MatchResponse(BaseModel):
@@ -147,6 +157,7 @@ class GenerateRequest(BaseModel):
     ce_types: list[str]
     start_time: time
     end_time: time
+    overrides: dict[str, str] | None = None
     overrides_path: str | None = None
     output_dir: str = "./output"
 
@@ -297,45 +308,64 @@ def _build_preview_pdf(  # noqa: PLR0913
 # ═══════════════════════════════════════════════════════════════════════════
 
 
-def _serialize_pipeline_result(result: PipelineResult) -> dict[str, object]:
-    """Convert a ``PipelineResult`` into a JSON-safe dictionary."""
-    eligible: list[dict[str, object]] = [
-        {
-            "full_name": c.full_name,
-            "ce_type": str(c.ce_type),
-            "ce_credits": c.ce_credits,
-            "training_title": c.training_title,
-            "training_date": c.training_date.isoformat(),
-            "instructor_name": c.instructor_name,
-            "license_number": c.license_number,
-            "issue_date": c.issue_date.isoformat(),
-            "filename": c.output_filename,
-        }
-        for c in result.eligible
-    ]
+def _participant_from_brief(brief: MatchParticipantBrief) -> ParticipantAttendance:
+    record = AttendanceRecord(
+        name_raw=brief.name,
+        email=None,
+        join_time=brief.first_join,
+        leave_time=brief.last_leave,
+        duration_minutes=brief.total_attended_minutes,
+        is_guest=False,
+        is_waiting_room=False,
+    )
+    return ParticipantAttendance.from_records([record])
 
-    ineligible: list[dict[str, object]] = [
-        {
-            "name_qualtrics": e.name_qualtrics,
-            "name_zoom": e.name_zoom,
-            "match_status": e.match_status,
-            "reason": e.reason,
-            "status": str(e.status),
-            "late_join_minutes": e.late_join_minutes,
-            "early_leave_minutes": e.early_leave_minutes,
-            "total_gaps_minutes": e.total_gaps_minutes,
-        }
-        for e in result.ineligible
-    ]
 
+def _attendance_payload(
+    participant: ParticipantAttendance,
+    session_start: datetime,
+    session_end: datetime,
+) -> dict[str, object]:
+    result = validate_attendance(participant, session_start, session_end)
     return {
-        "total_requests": result.total_requests,
-        "eligible_count": len(eligible),
-        "ineligible_count": len(ineligible),
-        "errors": result.errors,
-        "eligible": eligible,
-        "ineligible": ineligible,
+        "is_eligible": result.is_eligible,
+        "late_join": result.late_join_minutes,
+        "early_leave": result.early_leave_minutes,
+        "gaps": result.mid_session_gaps_minutes,
+        "total_missed": result.total_missed_minutes,
+        "total_attended": result.total_attended_minutes,
+        "failure_reason": result.failure_reason,
     }
+
+
+def _result_status(status: str) -> str:
+    match status:
+        case "not_found_in_attendance":
+            return "Not Found"
+        case "attendance_insufficient":
+            return "Attendance"
+        case "name_match_ambiguous":
+            return "Ambiguous"
+        case "eligible":
+            return "Attendance"
+        case _:
+            return "Attendance"
+
+
+def _register_generated_pdf(path: Path) -> str:
+    resolved = path.resolve()
+    if resolved.suffix.lower() != ".pdf" or not resolved.exists() or not resolved.is_file():
+        raise HTTPException(status_code=500, detail="Generated PDF missing")
+    token = secrets.token_urlsafe(24)
+    _GENERATED_PDFS[token] = resolved
+    return token
+
+
+def _registered_pdf(token: str) -> Path:
+    pdf_path = _GENERATED_PDFS.get(token)
+    if pdf_path is None or not pdf_path.exists() or not pdf_path.is_file():
+        raise HTTPException(status_code=404, detail="PDF not found")
+    return pdf_path
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -409,9 +439,12 @@ async def match_endpoint(request: MatchRequest) -> MatchResponse:
     if not request.ce_requests:
         raise HTTPException(status_code=400, detail="ce_requests must not be empty")
 
-    zoom_names = [p.name_raw for p in request.zoom_participants]
+    participants = [_participant_from_brief(p) for p in request.zoom_participants]
+    zoom_names = [p.name_raw for p in participants]
+    zoom_lookup = {p.name_raw: p for p in participants}
     qualtrics_names = [r.name_on_certificate for r in request.ce_requests]
-    ce_type_map = {r.name_on_certificate: r.ce_type for r in request.ce_requests}
+    session_start = request.session_start or min(p.first_join for p in participants)
+    session_end = request.session_end or max(p.last_leave for p in participants)
 
     result = await asyncio.to_thread(
         match_participants, zoom_names, qualtrics_names, request.overrides,
@@ -419,33 +452,33 @@ async def match_endpoint(request: MatchRequest) -> MatchResponse:
 
     entries: list[MatchEntry] = []
     for q_name, match_result in result.items():
-        ce_type = ce_type_map.get(q_name, "unknown")
         match match_result:
             case MatchSuccess(matched_name=matched, confidence=conf):
+                participant = zoom_lookup[matched]
                 entries.append(
                     MatchEntry(
+                        kind="success",
                         qualtrics_name=q_name,
-                        ce_type=ce_type,
-                        match_kind="success",
-                        matched_name=matched,
+                        zoom_name=matched,
                         confidence=conf,
+                        attendance=_attendance_payload(
+                            participant, session_start, session_end
+                        ),
                     )
                 )
             case MatchAmbiguous(candidates=cands):
                 entries.append(
                     MatchEntry(
+                        kind="ambiguous",
                         qualtrics_name=q_name,
-                        ce_type=ce_type,
-                        match_kind="ambiguous",
                         candidates=list(cands),
                     )
                 )
             case MatchNotFound():
                 entries.append(
                     MatchEntry(
+                        kind="not_found",
                         qualtrics_name=q_name,
-                        ce_type=ce_type,
-                        match_kind="not_found",
                     )
                 )
             case _:
@@ -494,7 +527,13 @@ async def generate_endpoint(request: GenerateRequest) -> StreamingResponse:
 
     async def event_stream() -> AsyncGenerator[str, None]:
         yield "data: " + json.dumps(
-            {"event": "started", "message": "Pipeline started — parsing reports…"}
+            {
+                "type": "progress",
+                "current": 0,
+                "total": 0,
+                "success_count": 0,
+                "failure_count": 0,
+            }
         ) + "\n\n"
 
         result: PipelineResult = await asyncio.to_thread(
@@ -508,12 +547,33 @@ async def generate_endpoint(request: GenerateRequest) -> StreamingResponse:
             request.ce_types,
             request.start_time,
             request.end_time,
+            overrides=request.overrides,
             overrides_path=request.overrides_path,
             output_dir=request.output_dir,
         )
 
-        payload = _serialize_pipeline_result(result)
-        payload["event"] = "complete"
+        certificates = [
+            {
+                "name": cert.full_name,
+                "ce_type": str(cert.ce_type),
+                "filename": cert.output_filename,
+                "path": _register_generated_pdf(Path(request.output_dir) / cert.output_filename),
+            }
+            for cert in result.eligible
+        ]
+        ineligible_entries = [
+            {
+                "name": entry.name_qualtrics,
+                "status": _result_status(str(entry.status)),
+                "reason": entry.reason,
+            }
+            for entry in result.ineligible
+        ]
+        payload: dict[str, object] = {
+            "type": "complete",
+            "certificates": certificates,
+            "ineligible": ineligible_entries,
+        }
         yield "data: " + json.dumps(payload, default=str) + "\n\n"
 
     return StreamingResponse(event_stream(), media_type="text/event-stream")
@@ -532,11 +592,10 @@ async def download_zip_endpoint(request: DownloadZipRequest) -> StreamingRespons
     def _create_zip() -> io.BytesIO:
         buf = io.BytesIO()
         with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
-            for path_str in request.pdf_paths:
-                p = Path(path_str)
-                if p.exists() and p.is_file():
-                    zf.write(p, p.name)
-        buf.seek(0)
+            for token in request.pdf_paths:
+                pdf_path = _registered_pdf(token)
+                zf.write(pdf_path, pdf_path.name)
+        _ = buf.seek(0)
         return buf
 
     zip_buf = await asyncio.to_thread(_create_zip)
@@ -545,3 +604,10 @@ async def download_zip_endpoint(request: DownloadZipRequest) -> StreamingRespons
         media_type="application/zip",
         headers={"Content-Disposition": "attachment; filename=certificates.zip"},
     )
+
+
+@router.get("/pdf")
+def pdf_endpoint(path: str) -> FileResponse:
+    """Return a registered generated PDF by opaque token."""
+    pdf_path = _registered_pdf(path)
+    return FileResponse(pdf_path, media_type="application/pdf")
