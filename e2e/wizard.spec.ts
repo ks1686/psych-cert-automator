@@ -72,8 +72,9 @@ test.describe("Scenario 1: Full happy path", () => {
     await page.goto("/");
 
     // ── Wait for the app to load past the startup screen ──────────────────
-    // The loading screen shows "Starting Psych Cert Gen..." while waiting for
-    // the sidecar. In a Tauri environment this transitions automatically.
+    // <StartupScreen> shows a "Starting backend..." style headline while
+    // waiting for the sidecar. In a Tauri environment this transitions
+    // automatically once the health check succeeds.
     // Wait for the wizard to appear by looking for Step 1's card title.
     await expect(
       page.getByRole("heading", { name: "Training Metadata" }),
@@ -595,33 +596,30 @@ test.describe("Scenario 7: Dark mode toggle", () => {
 // ─────────────────────────────────────────────────────────────────────────────
 
 test.describe("Scenario 8: Startup timeout and error screen", () => {
-  test("should display the loading screen while waiting for backend", async ({
+  test("should display the startup screen while waiting for backend", async ({
     page,
   }) => {
     // ── Loading state ─────────────────────────────────────────────────────
     // When the Tauri app first loads (before `sidecar-ready` event fires),
-    // the app renders a LoadingScreen component:
-    //
-    //   <Loader2 className="h-8 w-8 animate-spin text-primary" />
-    //   <h1>Psych Cert Gen</h1>
-    //   <p>Starting Psych Cert Gen...</p>
+    // the app renders the <StartupScreen> component (CardTitle "Psych Cert
+    // Gen" plus a status headline like "Starting backend..."). Outside a
+    // real Tauri context (as in this browser-based e2e run), the Tauri
+    // event API is unavailable, so StartupScreen detects that and fast-
+    // forwards to its "ready" state after a short, fixed delay before
+    // handing off to the wizard — there is no more blind multi-second
+    // fallback timer gating this transition.
 
     await page.goto("/");
 
-    // The loading screen may flash briefly, but in a dev environment
-    // the sidecar-ready fallback fires after 8 seconds if no event is
-    // received, transitioning to the wizard.
-    //
-    // If the loading screen is still visible, verify its elements:
-    const loadingText = page.getByText("Starting Psych Cert Gen...");
+    const startupTitle = page.getByRole("heading", { name: "Psych Cert Gen" });
     const wizardTitle = page.getByRole("heading", {
       name: "Training Metadata",
     });
 
-    // At least one of these should be visible (loading or wizard)
-    const loadingVisible = await loadingText.isVisible().catch(() => false);
+    // At least one of these should be visible (startup screen or wizard)
+    const startupVisible = await startupTitle.isVisible().catch(() => false);
     const wizardVisible = await wizardTitle.isVisible().catch(() => false);
-    expect(loadingVisible || wizardVisible).toBe(true);
+    expect(startupVisible || wizardVisible).toBe(true);
   });
 
   test("should display error boundary on unhandled error", async ({
