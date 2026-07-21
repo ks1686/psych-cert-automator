@@ -48,14 +48,27 @@ fn spawn_sidecar(
     sidecar: &SidecarHandle,
     handle: &tauri::AppHandle,
 ) {
-    // Resolve and spawn the sidecar binary declared in tauri.conf.json
-    let mut rx = match app.shell().sidecar("bin/api/psych-cert-gen") {
+    // Resolve and spawn the sidecar binary declared in tauri.conf.json.
+    //
+    // NOTE: use the *basename* "psych-cert-gen", not "bin/api/psych-cert-gen".
+    // tauri-plugin-shell resolves a sidecar to `<exe_dir>/<name>` verbatim
+    // (see relative_command_path in the plugin), while the Tauri bundler
+    // flattens externalBin into the executable directory as just the
+    // basename (Contents/MacOS/psych-cert-gen on macOS,
+    // psych-cert-gen.exe next to the app on Windows). Passing the
+    // "bin/api/" subpath made runtime look for <exe_dir>/bin/api/... which
+    // does not exist in the bundle, so the sidecar never spawned and the
+    // backend never started.
+    eprintln!("[sidecar] resolving psych-cert-gen ...");
+    let mut rx = match app.shell().sidecar("psych-cert-gen") {
         Ok(cmd) => match cmd.spawn() {
             Ok((rx, child)) => {
+                eprintln!("[sidecar] spawned OK, pid={:?}", child.pid());
                 *sidecar.lock().unwrap() = Some(child);
                 rx
             }
             Err(e) => {
+                eprintln!("[sidecar] FAILED to spawn: {e}");
                 handle
                     .emit(
                         "sidecar-error",
@@ -66,6 +79,7 @@ fn spawn_sidecar(
             }
         },
         Err(e) => {
+            eprintln!("[sidecar] NOT FOUND / resolution error: {e}");
             handle
                 .emit(
                     "sidecar-error",
