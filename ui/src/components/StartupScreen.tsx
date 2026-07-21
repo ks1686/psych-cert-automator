@@ -25,6 +25,8 @@ type StartupState = "loading" | "timeout" | "error" | "ready";
 // Keep in sync with the Rust-side health-check timeout in src-tauri/src/lib.rs.
 const TIMEOUT_MS = 60_000;
 const MAX_RETRIES = 3;
+/** Trailing sidecar stdout/stderr lines kept for the live log view. */
+const MAX_LOG_LINES = 200;
 /** How long the "Backend ready!" message stays visible before calling `onReady`. */
 const READY_DISPLAY_MS = 1_500;
 /** Poll interval for the elapsed-time counter (ms). */
@@ -92,6 +94,7 @@ export default function StartupScreen({ onReady }: StartupScreenProps) {
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [elapsed, setElapsed] = useState(0);
   const [retryCount, setRetryCount] = useState(0);
+  const [logLines, setLogLines] = useState<string[]>([]);
 
   // Persisted refs that survive state resets on retry.
   const mountedRef = useRef(true);
@@ -102,6 +105,17 @@ export default function StartupScreen({ onReady }: StartupScreenProps) {
   const elapsedTimer = useRef<ReturnType<typeof setInterval>>(undefined);
   const timeoutTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
   const readyTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
+  const logEndRef = useRef<HTMLDivElement>(null);
+
+  const appendLogLines = useCallback((chunk: string) => {
+    const pieces = chunk.split("\n").filter((l) => l.length > 0);
+    if (pieces.length === 0) return;
+    setLogLines((prev) => [...prev, ...pieces].slice(-MAX_LOG_LINES));
+  }, []);
+
+  useEffect(() => {
+    logEndRef.current?.scrollIntoView({ block: "end" });
+  }, [logLines]);
 
   // ── cleanup helpers ────────────────────────────────────────────────────
 
@@ -146,6 +160,18 @@ export default function StartupScreen({ onReady }: StartupScreenProps) {
       });
       unlistenFns.current.push(unlistenError);
 
+      const unlistenStdout = await listen<string>("sidecar-stdout", (event) => {
+        if (!mountedRef.current) return;
+        appendLogLines(tryParsePayload(event.payload));
+      });
+      unlistenFns.current.push(unlistenStdout);
+
+      const unlistenStderr = await listen<string>("sidecar-stderr", (event) => {
+        if (!mountedRef.current) return;
+        appendLogLines(tryParsePayload(event.payload));
+      });
+      unlistenFns.current.push(unlistenStderr);
+
       return true;
     } catch (err: unknown) {
       // Not running inside Tauri (e.g. `pnpm dev` in a plain browser).
@@ -162,7 +188,7 @@ export default function StartupScreen({ onReady }: StartupScreenProps) {
       }, READY_DISPLAY_MS);
       return false;
     }
-  }, [removeAllListeners, clearAllTimers]);
+  }, [removeAllListeners, clearAllTimers, appendLogLines]);
 
   // ── retry ──────────────────────────────────────────────────────────────
 
@@ -334,6 +360,17 @@ export default function StartupScreen({ onReady }: StartupScreenProps) {
             <p className="text-xs tabular-nums text-muted-foreground">
               {elapsed}s elapsed
             </p>
+          )}
+
+          {/* Live sidecar stdout/stderr — lets you watch what the backend
+              process is actually doing without needing devtools. */}
+          {logLines.length > 0 && (
+            <div className="max-h-48 overflow-y-auto rounded-md bg-muted/50 p-2 text-left">
+              <pre className="whitespace-pre-wrap break-words font-mono text-[11px] leading-snug text-muted-foreground">
+                {logLines.join("\n")}
+              </pre>
+              <div ref={logEndRef} />
+            </div>
           )}
 
           {/* Failure actions */}
