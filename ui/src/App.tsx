@@ -26,6 +26,7 @@ import type {
 } from "@/components/StepMatchReview";
 import StepGenerate from "@/components/StepGenerate";
 import type { TrainingMetadata } from "@/components/StepGenerate";
+import StartupScreen from "@/components/StartupScreen";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
@@ -121,17 +122,6 @@ function toCERequestSummary(
 // ─────────────────────────────────────────────────────────────────────────────
 // Sub-components
 // ─────────────────────────────────────────────────────────────────────────────
-
-/** Shown while waiting for the Tauri sidecar to be ready. */
-function LoadingScreen() {
-  return (
-    <main className="flex min-h-screen flex-col items-center justify-center gap-4">
-      <Loader2 className="h-8 w-8 animate-spin text-primary" />
-      <h1 className="text-2xl font-bold tracking-tight">Psych Cert Gen</h1>
-      <p className="text-muted-foreground">Starting Psych Cert Gen...</p>
-    </main>
-  );
-}
 
 /** Rendered by the AppErrorBoundary when an unhandled error is caught. */
 function ErrorFallback({
@@ -272,16 +262,11 @@ function WizardApp() {
     useState<TransitionPhase>("idle");
   const [matchError, setMatchError] = useState<string | null>(null);
 
-  // ── Tauri sidecar event listeners ───────────────────────────────────────
+  // ── Tauri sidecar stderr forwarding (debug only; readiness is handled by
+  //    <StartupScreen>, which owns the real health-check/timeout/retry flow) ──
 
   useEffect(() => {
     const unlisteners: Array<() => void> = [];
-
-    listen<unknown>("sidecar-ready", () => {
-      setSidecarReady(true);
-    }).then((unlisten) => {
-      unlisteners.push(unlisten);
-    });
 
     listen<string>("sidecar-stderr", (event) => {
       console.log("[sidecar-stderr]", event.payload);
@@ -289,16 +274,7 @@ function WizardApp() {
       unlisteners.push(unlisten);
     });
 
-    // Fallback: if no event within 8 s, proceed anyway (dev without sidecar)
-    const fallback = setTimeout(() => {
-      setSidecarReady(true);
-      console.warn(
-        "[App] sidecar-ready not received after 8 s — proceeding without sidecar",
-      );
-    }, 8000);
-
     return () => {
-      clearTimeout(fallback);
       unlisteners.forEach((fn) => fn());
     };
   }, []);
@@ -400,10 +376,10 @@ function WizardApp() {
     [step, wizardState],
   );
 
-  // ── Loading screen (before sidecar signals ready) ───────────────────────
+  // ── Startup screen (before sidecar signals ready) ───────────────────────
 
   if (!sidecarReady) {
-    return <LoadingScreen />;
+    return <StartupScreen onReady={() => setSidecarReady(true)} />;
   }
 
   // ── Matching transition overlay ─────────────────────────────────────────
