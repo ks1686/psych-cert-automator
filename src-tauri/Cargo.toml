@@ -1,6 +1,6 @@
 [package]
 name = "psych-cert-app"
-version = "0.2.1"
+version = "0.2.2"
 description = "Psych Cert Gen - CE Certificate Automator"
 authors = ["GSAPP Psychology Department"]
 edition = "2021"

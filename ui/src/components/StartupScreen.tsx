@@ -22,7 +22,8 @@ type StartupState = "loading" | "timeout" | "error" | "ready";
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
-const TIMEOUT_MS = 30_000;
+// Keep in sync with the Rust-side health-check timeout in src-tauri/src/lib.rs.
+const TIMEOUT_MS = 60_000;
 const MAX_RETRIES = 3;
 /** How long the "Backend ready!" message stays visible before calling `onReady`. */
 const READY_DISPLAY_MS = 1_500;
@@ -50,7 +51,7 @@ function deriveStatus(
     case "timeout":
       return {
         headline: "Backend failed to start",
-        subtext: "The Python backend did not respond within 30 seconds.",
+        subtext: "The Python backend did not respond within 60 seconds.",
       };
     case "ready":
       return {
@@ -309,10 +310,17 @@ export default function StartupScreen({ onReady }: StartupScreenProps) {
             {headline}
           </p>
 
-          {/* Secondary detail */}
-          {subtext && (
-            <p className="text-xs text-muted-foreground">{subtext}</p>
-          )}
+          {/* Secondary detail — errors may carry a multi-line stderr tail,
+              so render those left-aligned, monospace, and scrollable rather
+              than as centered prose. */}
+          {subtext &&
+            (state === "error" ? (
+              <pre className="max-h-40 overflow-y-auto whitespace-pre-wrap break-words rounded-md bg-muted/50 p-2 text-left font-mono text-xs text-muted-foreground">
+                {subtext}
+              </pre>
+            ) : (
+              <p className="text-xs text-muted-foreground">{subtext}</p>
+            ))}
 
           {/* Platform note — only during loading */}
           {state === "loading" && (

@@ -1,3 +1,5 @@
+use std::collections::VecDeque;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use tauri::{Emitter, RunEvent};
@@ -6,6 +8,9 @@ use tauri_plugin_shell::ShellExt;
 
 /// Shared handle to the sidecar child process so the exit handler can kill it.
 type SidecarHandle = Arc<Mutex<Option<CommandChild>>>;
+
+/// Number of trailing stderr lines kept for crash diagnostics.
+const STDERR_TAIL_LINES: usize = 20;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -71,8 +76,14 @@ fn spawn_sidecar(
         }
     };
 
+    // Set once the health check sees its first 200, so a post-shutdown
+    // process exit doesn't get misreported as a startup crash.
+    let became_healthy = Arc::new(AtomicBool::new(false));
+    let mut stderr_tail: VecDeque<String> = VecDeque::with_capacity(STDERR_TAIL_LINES);
+
     // ── stdout / stderr forwarding ──────────────────────────────────────
     let fwd_handle = handle.clone();
+    let healthy_for_events = became_healthy.clone();
     tauri::async_runtime::spawn(async move {
         while let Some(event) = rx.recv().await {
             match event {
@@ -83,15 +94,37 @@ fn spawn_sidecar(
                         .ok();
                 }
                 CommandEvent::Stderr(bytes) => {
-                    let line = String::from_utf8_lossy(&bytes);
-                    fwd_handle
-                        .emit("sidecar-stderr", line.to_string())
-                        .ok();
+                    let line = String::from_utf8_lossy(&bytes).into_owned();
+                    if stderr_tail.len() == STDERR_TAIL_LINES {
+                        stderr_tail.pop_front();
+                    }
+                    stderr_tail.push_back(line.clone());
+                    fwd_handle.emit("sidecar-stderr", line).ok();
                 }
                 CommandEvent::Terminated(payload) => {
                     fwd_handle
                         .emit("sidecar-terminated", payload.code)
                         .ok();
+                    // Only surface this as a startup error if the backend
+                    // never became healthy — otherwise it's an expected
+                    // shutdown after the app already moved past startup.
+                    if !healthy_for_events.load(Ordering::SeqCst) {
+                        let tail = Vec::from(stderr_tail.clone()).join("\n");
+                        let detail = if tail.is_empty() {
+                            "(no output captured)".to_string()
+                        } else {
+                            tail
+                        };
+                        fwd_handle
+                            .emit(
+                                "sidecar-error",
+                                format!(
+                                    "Backend process exited early (code {:?}). Last output:\n{}",
+                                    payload.code, detail
+                                ),
+                            )
+                            .ok();
+                    }
                     break;
                 }
                 CommandEvent::Error(msg) => {
@@ -105,17 +138,19 @@ fn spawn_sidecar(
     // ── health-check polling ────────────────────────────────────────────
     let hc_handle = handle.clone();
     tauri::async_runtime::spawn(async move {
-        poll_health(hc_handle).await;
+        poll_health(hc_handle, became_healthy).await;
     });
 }
 
 /// Poll `GET http://127.0.0.1:8008/health` every 200 ms until the first
-/// 200 response (up to 30 s). Once healthy, emit `sidecar-ready` and
-/// switch to a slow periodic check every 5 s to detect crashes.
-async fn poll_health(handle: tauri::AppHandle) {
+/// 200 response (up to 60 s — PyInstaller onefile cold starts can be slow,
+/// especially under antivirus scanning on first run on Windows). Once
+/// healthy, emit `sidecar-ready` and switch to a slow periodic check every
+/// 5 s to detect crashes.
+async fn poll_health(handle: tauri::AppHandle, became_healthy: Arc<AtomicBool>) {
     let health_url = "http://127.0.0.1:8008/health";
     let start = std::time::Instant::now();
-    let timeout = std::time::Duration::from_secs(30);
+    let timeout = std::time::Duration::from_secs(60);
     let mut ready_emitted = false;
 
     loop {
@@ -123,7 +158,7 @@ async fn poll_health(handle: tauri::AppHandle) {
             handle
                 .emit(
                     "sidecar-error",
-                    "Health check timed out after 30 seconds",
+                    "Health check timed out after 60 seconds",
                 )
                 .ok();
             return;
@@ -140,6 +175,7 @@ async fn poll_health(handle: tauri::AppHandle) {
 
         if is_healthy {
             if !ready_emitted {
+                became_healthy.store(true, Ordering::SeqCst);
                 handle
                     .emit("sidecar-ready", serde_json::Value::Null)
                     .ok();
