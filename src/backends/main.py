@@ -45,11 +45,19 @@ def _stdin_listener() -> None:
 
 app = FastAPI(title="psych-cert-gen backend")
 
+# Allowed webview origins across platforms. Tauri v2 serves the app from a
+# different origin per platform, and getting this wrong silently breaks every
+# frontend fetch with a CORS "Failed to fetch":
+#   - macOS / iOS / Linux : tauri://localhost   (custom protocol)
+#   - Windows / Android    : http://tauri.localhost  (WebView2 requires http)
+# "https://tauri.localhost" is included for configs that use HTTPS custom
+# protocols, and "http://localhost:1420" is the Vite dev server.
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
         "http://localhost:1420",
         "tauri://localhost",
+        "http://tauri.localhost",
         "https://tauri.localhost",
     ],
     allow_credentials=True,
