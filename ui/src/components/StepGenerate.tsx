@@ -114,7 +114,7 @@ interface StepGenerateProps {
 
 // ── Constants ───────────────────────────────────────────────────────────────
 
-const API_BASE = "http://localhost:8008";
+const API_BASE = "http://127.0.0.1:8008";
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 

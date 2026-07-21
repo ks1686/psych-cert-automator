@@ -31,6 +31,16 @@ const MAX_LOG_LINES = 200;
 const READY_DISPLAY_MS = 1_500;
 /** Poll interval for the elapsed-time counter (ms). */
 const ELAPSED_TICK_MS = 200;
+/**
+ * Backend health endpoint. Use 127.0.0.1 (not "localhost"): on Windows,
+ * "localhost" often resolves to ::1 (IPv6) first, but uvicorn binds
+ * 127.0.0.1 (IPv4) only, so a localhost fetch can fail to connect.
+ */
+const HEALTH_URL = "http://127.0.0.1:8008/health";
+/** How often the frontend polls the health endpoint (ms). */
+const HEALTH_POLL_MS = 400;
+/** Per-request abort timeout for a single health poll (ms). */
+const HEALTH_REQ_TIMEOUT_MS = 2_000;
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -105,6 +115,8 @@ export default function StartupScreen({ onReady }: StartupScreenProps) {
   const elapsedTimer = useRef<ReturnType<typeof setInterval>>(undefined);
   const timeoutTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
   const readyTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
+  const pollTimer = useRef<ReturnType<typeof setInterval>>(undefined);
+  const readyHandledRef = useRef(false);
   const logEndRef = useRef<HTMLDivElement>(null);
 
   const appendLogLines = useCallback((chunk: string) => {
@@ -123,6 +135,7 @@ export default function StartupScreen({ onReady }: StartupScreenProps) {
     if (elapsedTimer.current !== undefined) clearInterval(elapsedTimer.current);
     if (timeoutTimer.current !== undefined) clearTimeout(timeoutTimer.current);
     if (readyTimer.current !== undefined) clearTimeout(readyTimer.current);
+    if (pollTimer.current !== undefined) clearInterval(pollTimer.current);
   }, []);
 
   const removeAllListeners = useCallback(() => {
@@ -135,25 +148,66 @@ export default function StartupScreen({ onReady }: StartupScreenProps) {
     clearAllTimers();
   }, [removeAllListeners, clearAllTimers]);
 
-  // ── sidecar event wiring ───────────────────────────────────────────────
+  // ── readiness ──────────────────────────────────────────────────────────
+
+  /**
+   * Transition to the ready state exactly once. Both the direct health
+   * poll and the (redundant) Tauri `sidecar-ready` event funnel through
+   * here, so whichever fires first wins and the other is a no-op.
+   */
+  const markReady = useCallback(() => {
+    if (readyHandledRef.current || !mountedRef.current) return;
+    readyHandledRef.current = true;
+    clearAllTimers();
+    setState("ready");
+    readyTimer.current = setTimeout(() => {
+      if (!mountedRef.current) return;
+      onReadyRef.current();
+    }, READY_DISPLAY_MS);
+  }, [clearAllTimers]);
+
+  /**
+   * Poll the backend health endpoint directly. This is the source of
+   * truth for readiness — it does not depend on the fire-once
+   * `sidecar-ready` Tauri event (which can be emitted before the webview
+   * has registered its listener and thus be missed entirely), and it
+   * verifies exactly what the app needs: that the backend is reachable
+   * before any wizard step tries to call it.
+   */
+  const startHealthPolling = useCallback(() => {
+    const tick = async () => {
+      if (!mountedRef.current || readyHandledRef.current) return;
+      try {
+        const controller = new AbortController();
+        const abort = setTimeout(
+          () => controller.abort(),
+          HEALTH_REQ_TIMEOUT_MS,
+        );
+        const res = await fetch(HEALTH_URL, { signal: controller.signal });
+        clearTimeout(abort);
+        if (res.ok) markReady();
+      } catch {
+        // Backend not reachable yet — keep polling until ready or timeout.
+      }
+    };
+    void tick();
+    pollTimer.current = setInterval(() => void tick(), HEALTH_POLL_MS);
+  }, [markReady]);
+
+  // ── sidecar event wiring (best-effort diagnostics only) ────────────────
 
   const wireEvents = useCallback(async () => {
     removeAllListeners();
 
     try {
+      // Redundant fast path: if the event does arrive, use it.
       const unlistenReady = await listen("sidecar-ready", () => {
-        if (!mountedRef.current) return;
-        clearAllTimers();
-        setState("ready");
-        readyTimer.current = setTimeout(() => {
-          if (!mountedRef.current) return;
-          onReadyRef.current();
-        }, READY_DISPLAY_MS);
+        markReady();
       });
       unlistenFns.current.push(unlistenReady);
 
       const unlistenError = await listen<string>("sidecar-error", (event) => {
-        if (!mountedRef.current) return;
+        if (!mountedRef.current || readyHandledRef.current) return;
         clearAllTimers();
         setState("error");
         setErrorMessage(tryParsePayload(event.payload));
@@ -171,24 +225,17 @@ export default function StartupScreen({ onReady }: StartupScreenProps) {
         appendLogLines(tryParsePayload(event.payload));
       });
       unlistenFns.current.push(unlistenStderr);
-
-      return true;
     } catch (err: unknown) {
-      // Not running inside Tauri (e.g. `pnpm dev` in a plain browser).
-      // Simulate a fast ready transition so the app is usable during dev.
+      // Not running inside Tauri (e.g. `bun run dev` in a plain browser).
+      // That's fine — health polling is independent of Tauri events and
+      // remains the source of truth for readiness.
       console.warn(
-        "StartupScreen: Tauri event API unavailable (are you running outside Tauri?).",
+        "StartupScreen: Tauri event API unavailable (running outside Tauri?). " +
+          "Falling back to direct health polling.",
         err instanceof Error ? err.message : err,
       );
-      clearAllTimers();
-      setState("ready");
-      readyTimer.current = setTimeout(() => {
-        if (!mountedRef.current) return;
-        onReadyRef.current();
-      }, READY_DISPLAY_MS);
-      return false;
     }
-  }, [removeAllListeners, clearAllTimers, appendLogLines]);
+  }, [removeAllListeners, clearAllTimers, appendLogLines, markReady]);
 
   // ── retry ──────────────────────────────────────────────────────────────
 
@@ -200,6 +247,7 @@ export default function StartupScreen({ onReady }: StartupScreenProps) {
     setState("loading");
     setErrorMessage(null);
     setElapsed(0);
+    readyHandledRef.current = false;
     startTimeRef.current = Date.now();
 
     // Restart elapsed counter.
@@ -216,9 +264,12 @@ export default function StartupScreen({ onReady }: StartupScreenProps) {
       setState("timeout");
     }, TIMEOUT_MS);
 
+    // Resume polling the backend health endpoint.
+    startHealthPolling();
+
     // Emit a best-effort retry event so the Rust sidecar manager can react.
     void emit("retry-sidecar", { attempt: nextCount });
-  }, [retryCount]);
+  }, [retryCount, startHealthPolling]);
 
   // ── quit ───────────────────────────────────────────────────────────────
 
@@ -258,15 +309,17 @@ export default function StartupScreen({ onReady }: StartupScreenProps) {
       setState("timeout");
     }, TIMEOUT_MS);
 
-    // Wire Tauri event listeners.
+    // Wire Tauri event listeners (best-effort diagnostics), then start the
+    // direct health poll that actually drives readiness.
     void wireEvents();
+    startHealthPolling();
 
     return () => {
       mountedRef.current = false;
       fullCleanup();
     };
-    // wireEvents is intentionally excluded — restarting it on retries is
-    // handled by handleRetry, not by re-running this effect.
+    // wireEvents/startHealthPolling are intentionally excluded — restarting
+    // them on retries is handled by handleRetry, not by re-running this effect.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 

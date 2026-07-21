@@ -140,7 +140,7 @@ export default function StepMetadata({
   const handleSave = useCallback(async () => {
     setSaveStatus("saving");
     try {
-      const response = await fetch("http://localhost:8008/api/sessions", {
+      const response = await fetch("http://127.0.0.1:8008/api/sessions", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -168,7 +168,7 @@ export default function StepMetadata({
   const handleLoad = useCallback(async () => {
     setLoadError(null);
     try {
-      const response = await fetch("http://localhost:8008/api/sessions");
+      const response = await fetch("http://127.0.0.1:8008/api/sessions");
       if (!response.ok) {
         throw new Error(`Server responded with ${response.status}`);
       }
