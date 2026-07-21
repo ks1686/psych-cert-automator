@@ -152,39 +152,65 @@ async fn poll_health(handle: tauri::AppHandle, became_healthy: Arc<AtomicBool>) 
     let start = std::time::Instant::now();
     let timeout = std::time::Duration::from_secs(60);
     let mut ready_emitted = false;
+    let mut last_error: Option<String> = None;
+    let mut last_logged_error: Option<String> = None;
 
     loop {
         if start.elapsed() > timeout {
+            let detail = last_error
+                .map(|e| format!(" Last connection error: {e}"))
+                .unwrap_or_default();
             handle
                 .emit(
                     "sidecar-error",
-                    "Health check timed out after 60 seconds",
+                    format!("Health check timed out after 60 seconds.{detail}"),
                 )
                 .ok();
             return;
         }
 
-        let is_healthy = {
+        let attempt = {
             let url = health_url.to_string();
             tokio::task::spawn_blocking(move || {
-                ureq::get(&url).call().map(|r| r.status() == 200).unwrap_or(false)
+                ureq::get(&url)
+                    .call()
+                    .map(|r| r.status())
+                    .map_err(|e| e.to_string())
             })
             .await
-            .unwrap_or(false)
+            .unwrap_or_else(|join_err| Err(format!("task join error: {join_err}")))
         };
 
-        if is_healthy {
-            if !ready_emitted {
-                became_healthy.store(true, Ordering::SeqCst);
-                handle
-                    .emit("sidecar-ready", serde_json::Value::Null)
-                    .ok();
-                ready_emitted = true;
+        match attempt {
+            Ok(200) => {
+                if !ready_emitted {
+                    became_healthy.store(true, Ordering::SeqCst);
+                    handle
+                        .emit("sidecar-ready", serde_json::Value::Null)
+                        .ok();
+                    ready_emitted = true;
+                }
+                tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                continue;
             }
-            tokio::time::sleep(std::time::Duration::from_secs(5)).await;
-        } else {
-            tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+            Ok(status) => last_error = Some(format!("unexpected status {status}")),
+            Err(e) => last_error = Some(e),
         }
+
+        // Log each *new* connection error as it's first seen, so the
+        // startup screen's live log shows what's actually failing instead
+        // of staying silent until the final timeout.
+        if last_error != last_logged_error {
+            handle
+                .emit(
+                    "sidecar-stderr",
+                    format!("[health-check] {}", last_error.as_deref().unwrap_or("?")),
+                )
+                .ok();
+            last_logged_error = last_error.clone();
+        }
+
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
     }
 }
 
