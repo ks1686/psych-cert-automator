@@ -72,7 +72,9 @@ export function useWizard(): WizardContextValue {
 // Helpers
 // ─────────────────────────────────────────────────────────────────────────────
 
-const API_BASE = "http://localhost:8008";
+// Use 127.0.0.1 (not "localhost"): on Windows "localhost" can resolve to ::1
+// (IPv6) first, but the backend binds 127.0.0.1 (IPv4) only.
+const API_BASE = "http://127.0.0.1:8008";
 
 /** Derive TrainingMetadata from Step 1 + Step 2 data. */
 function deriveTrainingMetadata(

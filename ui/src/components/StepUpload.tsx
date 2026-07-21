@@ -81,7 +81,9 @@ interface StepUploadProps {
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
-const BASE_URL = "http://localhost:8008";
+// Use 127.0.0.1 (not "localhost"): on Windows "localhost" can resolve to ::1
+// (IPv6) first, but the backend binds 127.0.0.1 (IPv4) only.
+const BASE_URL = "http://127.0.0.1:8008";
 
 function formatDatetime(iso: string): string {
   try {

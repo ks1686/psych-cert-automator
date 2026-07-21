@@ -153,7 +153,8 @@ async fn poll_health(handle: tauri::AppHandle, became_healthy: Arc<AtomicBool>) 
     let timeout = std::time::Duration::from_secs(60);
     let mut ready_emitted = false;
     let mut last_error: Option<String> = None;
-    let mut last_logged_error: Option<String> = None;
+    let mut last_logged_at: Option<std::time::Instant> = None;
+    const LOG_INTERVAL: std::time::Duration = std::time::Duration::from_secs(2);
 
     loop {
         if start.elapsed() > timeout {
@@ -197,17 +198,24 @@ async fn poll_health(handle: tauri::AppHandle, became_healthy: Arc<AtomicBool>) 
             Err(e) => last_error = Some(e),
         }
 
-        // Log each *new* connection error as it's first seen, so the
-        // startup screen's live log shows what's actually failing instead
-        // of staying silent until the final timeout.
-        if last_error != last_logged_error {
+        // Re-announce the current connection error at most once per
+        // LOG_INTERVAL (rather than only on first occurrence) so the
+        // startup screen's live log is guaranteed to show it even if the
+        // very first attempt's event fires before the frontend finishes
+        // registering its listener — a real race, since polling starts
+        // immediately on the Rust side while the webview still has to
+        // mount React first.
+        let should_log = last_logged_at
+            .map(|t| t.elapsed() >= LOG_INTERVAL)
+            .unwrap_or(true);
+        if should_log {
             handle
                 .emit(
                     "sidecar-stderr",
                     format!("[health-check] {}", last_error.as_deref().unwrap_or("?")),
                 )
                 .ok();
-            last_logged_error = last_error.clone();
+            last_logged_at = Some(std::time::Instant::now());
         }
 
         tokio::time::sleep(std::time::Duration::from_millis(200)).await;

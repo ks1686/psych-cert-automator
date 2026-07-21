@@ -15,6 +15,13 @@ import sys
 import threading
 from pathlib import Path
 
+# Force line-buffered stdout/stderr. Python defaults to full block-buffering
+# when stdout isn't a real terminal (e.g. piped by the Tauri sidecar), so
+# print()/logging output can sit unflushed indefinitely — invisible to the
+# app's live startup log even though the process is running fine.
+sys.stdout.reconfigure(line_buffering=True)
+sys.stderr.reconfigure(line_buffering=True)
+
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
