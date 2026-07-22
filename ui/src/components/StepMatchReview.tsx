@@ -3,6 +3,8 @@ import { CheckCircle, AlertTriangle, XCircle, Loader2 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   Table,
@@ -65,10 +67,12 @@ export interface CERequestSummary {
 export interface MatchData {
   matches: MatchEntryWire[];
   overrides: Record<string, string>;
+  excludedNames: string[];
   zoomParticipants: ParticipantSummary[];
   ceRequests: CERequestSummary[];
   sessionStart: string;
   sessionEnd: string;
+  zoomHost: string | null;
 }
 
 // ── Props ───────────────────────────────────────────────────────────────────
@@ -97,6 +101,30 @@ function formatAttendanceMinutes(attendance: AttendanceWire | null): string {
 
 // ── Component ───────────────────────────────────────────────────────────────
 
+function namesLikelySame(a: string, b: string): boolean {
+  const norm = (value: string) => value.trim().toLowerCase().replace(/\s+/g, " ");
+  const left = norm(a);
+  const right = norm(b);
+  if (!left || !right) return false;
+  return left === right || left.includes(right) || right.includes(left);
+}
+
+function initialExcludedNames(data: MatchData): Record<string, boolean> {
+  const excluded: Record<string, boolean> = {};
+  for (const name of data.excludedNames) {
+    excluded[name] = true;
+  }
+  const host = data.zoomHost;
+  if (host) {
+    for (const request of data.ceRequests) {
+      if (namesLikelySame(host, request.name_on_certificate)) {
+        excluded[request.name_on_certificate] = true;
+      }
+    }
+  }
+  return excluded;
+}
+
 export default function StepMatchReview({
   onNext,
   onBack,
@@ -105,6 +133,9 @@ export default function StepMatchReview({
   const [matches, setMatches] = useState<MatchEntryWire[]>(initialData.matches);
   const [overrides, setOverrides] = useState<Record<string, string>>(
     { ...initialData.overrides },
+  );
+  const [excluded, setExcluded] = useState<Record<string, boolean>>(() =>
+    initialExcludedNames(initialData),
   );
   const [isApplying, setIsApplying] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -208,23 +239,31 @@ export default function StepMatchReview({
     onNext({
       matches,
       overrides,
+      excludedNames: Object.keys(excluded).filter((name) => excluded[name]),
       zoomParticipants: initialData.zoomParticipants,
       ceRequests: initialData.ceRequests,
       sessionStart: initialData.sessionStart,
       sessionEnd: initialData.sessionEnd,
+      zoomHost: initialData.zoomHost,
     });
-  }, [matches, overrides, initialData, onNext]);
+  }, [matches, overrides, excluded, initialData, onNext]);
 
   const handleNext = useCallback(() => {
     onNext({
       matches,
       overrides,
+      excludedNames: Object.keys(excluded).filter((name) => excluded[name]),
       zoomParticipants: initialData.zoomParticipants,
       ceRequests: initialData.ceRequests,
       sessionStart: initialData.sessionStart,
       sessionEnd: initialData.sessionEnd,
+      zoomHost: initialData.zoomHost,
     });
-  }, [matches, overrides, initialData, onNext]);
+  }, [matches, overrides, excluded, initialData, onNext]);
+
+  const toggleExcluded = useCallback((qualtricsName: string, checked: boolean) => {
+    setExcluded((prev) => ({ ...prev, [qualtricsName]: checked }));
+  }, []);
 
   // ── Render helpers ──────────────────────────────────────────────────────
 
@@ -387,6 +426,7 @@ export default function StepMatchReview({
             <Table>
               <TableHeader>
                 <TableRow>
+                  <TableHead className="w-[90px]">Exclude</TableHead>
                   <TableHead>Qualtrics Name</TableHead>
                   <TableHead>Zoom Name (Matched)</TableHead>
                   <TableHead className="w-[100px]">Confidence</TableHead>
@@ -401,14 +441,46 @@ export default function StepMatchReview({
                     match.kind === "success" &&
                     match.attendance &&
                     !match.attendance.is_eligible;
+                  const isExcluded = excluded[match.qualtrics_name] === true;
+                  const isHost =
+                    initialData.zoomHost !== null &&
+                    namesLikelySame(
+                      initialData.zoomHost,
+                      match.qualtrics_name,
+                    );
 
                   return (
                     <TableRow
                       key={match.qualtrics_name}
                       className={
-                        isIneligibleRow ? "bg-yellow-50 dark:bg-yellow-950/30" : ""
+                        isExcluded
+                          ? "bg-muted/40 opacity-70"
+                          : isIneligibleRow
+                            ? "bg-yellow-50 dark:bg-yellow-950/30"
+                            : ""
                       }
                     >
+                      <TableCell>
+                        <div className="flex items-center gap-2">
+                          <Checkbox
+                            id={`exclude-${match.qualtrics_name}`}
+                            checked={isExcluded}
+                            onCheckedChange={(checked) =>
+                              toggleExcluded(
+                                match.qualtrics_name,
+                                checked === true,
+                              )
+                            }
+                          />
+                          <Label
+                            htmlFor={`exclude-${match.qualtrics_name}`}
+                            className="cursor-pointer text-xs font-normal text-muted-foreground"
+                          >
+                            {isHost ? "Host" : "Skip"}
+                          </Label>
+                        </div>
+                      </TableCell>
+
                       {/* Qualtrics Name */}
                       <TableCell className="font-medium">
                         {match.qualtrics_name}

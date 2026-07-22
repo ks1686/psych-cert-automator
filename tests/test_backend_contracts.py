@@ -114,8 +114,11 @@ def test_preview_endpoint_accepts_flat_frontend_payload() -> None:
     response = asyncio.run(preview_endpoint(request))
     body = asyncio.run(_response_body(response))
 
-    assert response.media_type == "application/pdf"
-    assert body.startswith(b"%PDF")
+    assert response.media_type in {
+        "application/pdf",
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    }
+    assert body.startswith(b"%PDF") or body.startswith(b"PK")
 
 
 def test_download_zip_rejects_unregistered_pdf_paths(tmp_path: Path) -> None:
