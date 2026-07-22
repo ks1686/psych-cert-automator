@@ -476,22 +476,15 @@ async def generate_endpoint(request: GenerateRequest) -> StreamingResponse:
         )
 
         _clear_generated_registry()
-        path_by_stem = {
-            Path(p).stem: Path(p) for p in result.generated_paths
-        }
         certificates = []
-        for cert in result.eligible:
-            file_path = path_by_stem.get(cert.output_basename)
-            if file_path is None:
-                # Fall back to preferred PDF name, then DOCX.
-                pdf_candidate = Path(request.output_dir) / cert.output_filename
-                docx_candidate = Path(request.output_dir) / f"{cert.output_basename}.docx"
-                if pdf_candidate.is_file():
-                    file_path = pdf_candidate
-                elif docx_candidate.is_file():
-                    file_path = docx_candidate
-                else:
-                    continue
+        for cert, generated_path in zip(
+            result.eligible,
+            result.generated_paths,
+            strict=False,
+        ):
+            file_path = Path(generated_path)
+            if not file_path.is_file():
+                continue
             certificates.append(
                 {
                     "name": cert.full_name,
