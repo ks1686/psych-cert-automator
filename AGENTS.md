@@ -11,7 +11,7 @@ Tauri v2 desktop app for generating CE certificates from Zoom attendance and Qua
 | Desktop shell | Tauri v2 (Rust) |
 | Frontend | React + TypeScript + Vite + shadcn/ui + Tailwind CSS v4 |
 | Backend | Python 3.12+ FastAPI (runs as sidecar, localhost:8008) |
-| PDF generation | fpdf2 (pure Python) |
+| PDF generation | Official Word templates (python-docx) + soft-fail LibreOffice/Word → PDF |
 | Excel I/O | openpyxl |
 | **Node package manager** | **Bun** (not npm, not pnpm) |
 | Python package manager | uv |
@@ -54,3 +54,22 @@ Tauri v2 (Rust) → React frontend (ui/src/) → HTTP localhost:8008 → FastAPI
 - No `# type: ignore` or bare `except:` in Python
 - Original Python modules in `src/parser/`, `src/matcher/`, `src/validator/` must not be modified
 - All 23 existing Python tests must pass
+
+## Learned User Preferences
+
+- Prefer filling official Word (`.docx`) CE templates (mail-merge) over the generic fpdf layout; PDF conversion should soft-fail to writing `.docx` with a warning when Word/LibreOffice is unavailable
+- Supported CE types are NY, APA, NASP, and Certificate of Attendance; remove BCBA
+- Certificate of Attendance is the fallback when the Qualtrics CE type has no matching NY/APA/NASP template
+- Multi-day events should show a start–end date range on the certificate (single-date vs range may change later)
+- Keep event span (single-day vs multi-day) and delivery (virtual vs in-person) as separate controls; in-person shows a Location field, virtual locks the template’s virtual Location/Format strings
+- Auto-detect the Zoom host from the attendance report and pre-exclude them in Review Matches with an override checkbox
+- Provide a per-row Exclude checkbox in Review Matches for stragglers who should not receive a certificate
+- Use the combined NASP template that supports both virtual and in-person wording (`NASP Certificate TEMPLATE.docx`), not the virtual-only `TEMPLATE-2`
+- Emit one certificate file per person named `LastName_CECertificate_InstructorLastName_Date` (zip optional); Downloads as the output location is fine without a custom path system
+- After a generate run, deleting output files and running again must recreate certificates (do not leave Generate permanently unavailable or rely on stale download tokens)
+
+## Learned Workspace Facts
+
+- GitHub remote is `ks1686/psych-cert-automator` (local workspace folder may be named `psych-cert-gen`)
+- FastAPI CORS must allow the Windows Tauri webview origin `http://tauri.localhost`
+- Official CE Word templates (APA, NY, NASP, Certificate of Attendance) are the source of truth for certificate layout and are intended to live under the project (e.g. `templates/`) rather than only in `~/Downloads`

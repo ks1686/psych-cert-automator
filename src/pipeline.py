@@ -9,12 +9,12 @@ from __future__ import annotations
 
 import csv
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date, datetime, time
 from pathlib import Path
 from typing import TYPE_CHECKING, assert_never
 
-from src.generator.certificate import generate_all
+from src.generator.certificate import CertificateRenderOptions, generate_all
 from src.generator.report import generate_ineligibility_report
 from src.matcher.name_matcher import batch_match
 from src.models.certificate import (
@@ -51,12 +51,15 @@ class PipelineResult:
         eligible: List of ``CertificateOutput`` for successfully generated certificates.
         ineligible: List of ``IneligibilityEntry`` for requests that could not be fulfilled.
         errors: Human-readable error messages (empty when no errors occurred).
+        generated_paths: Absolute paths to generated certificate files (PDF or DOCX).
     """
 
     total_requests: int
     eligible: list[CertificateOutput]
     ineligible: list[IneligibilityEntry]
     errors: list[str]
+    generated_paths: list[str] = field(default_factory=list)
+
 
 
 # ── Public entry point ─────────────────────────────────────────────────────────────
@@ -76,35 +79,51 @@ def run_pipeline(  # noqa: PLR0913
     overrides: dict[str, str] | None = None,
     overrides_path: str | None = None,
     output_dir: str = "./output",
+    excluded_names: set[str] | None = None,
+    is_virtual: bool = True,
+    location: str | None = None,
+    end_date: date | None = None,
 ) -> PipelineResult:
     """Run the full CE certificate generation pipeline.
 
     Parse Zoom attendance and Qualtrics survey data, match names across the two
     sources with optional manual overrides, validate attendance, and generate
-    PDF certificates plus an ineligibility report.
+    certificates from official Word templates (PDF when a converter is available).
 
     Args:
         zoom_path: Path to the Zoom attendance ``.xlsx`` report.
         qualtrics_path: Path to the Qualtrics survey export ``.xlsx``.
         title: Training session title.
-        training_date: Date the training occurred.
+        training_date: Date the training occurred (or range start for multi-day).
         instructor: Instructor name.
         ce_credits: Number of CE credits awarded for full attendance.
-        ce_types: Short codes for CE types offered (e.g. ``['APA', 'NASP', 'BCBA']``).
+        ce_types: Short codes for CE types offered (e.g. ``['APA', 'NASP', 'NY']``).
         start_time: Scheduled session start time.
         end_time: Scheduled session end time.
         overrides: Optional in-memory mapping from Qualtrics names to Zoom names.
         overrides_path: Optional path to a two-column CSV mapping Qualtrics names
             to Zoom names for manual name matching.
-        output_dir: Directory where generated PDFs and reports are written.
+        output_dir: Directory where generated files and reports are written.
+        excluded_names: Qualtrics certificate names to skip (host/stragglers).
+        is_virtual: When True, use virtual Location/Format template strings.
+        location: In-person location text (ignored when ``is_virtual``).
+        end_date: Optional multi-day end date for the certificate date range.
 
     Returns:
-        ``PipelineResult`` with counts, eligible/ineligible lists, and any errors.
-        Does **not** call ``sys.exit()`` — errors are collected in the result.
+        ``PipelineResult`` with counts, eligible/ineligible lists, generated
+        paths, and any errors. Does **not** call ``sys.exit()``.
     """
     errors: list[str] = []
+    skip_names = {name.strip() for name in (excluded_names or set()) if name.strip()}
+    render_options = CertificateRenderOptions(
+        is_virtual=is_virtual,
+        location=location,
+        end_date=end_date,
+        session_start=start_time,
+        session_end=end_time,
+    )
 
-    _ = (ce_types, start_time, end_time)  # accepted for future cross-validation
+    _ = ce_types  # accepted for future cross-validation against Qualtrics types
 
     try:
         # ── Steps 1-2: Parse reports ───────────────────────────────────────
@@ -144,6 +163,18 @@ def run_pipeline(  # noqa: PLR0913
         ineligible: list[IneligibilityEntry] = []
 
         for request, participant, match_result in matches:
+            if request.name_on_certificate.strip() in skip_names:
+                ineligible.append(
+                    _make_ineligible(
+                        request,
+                        name_zoom=None,
+                        match_status="excluded",
+                        reason="Excluded from certificate generation",
+                        status=EligibilityStatus.ATTENDANCE_INSUFFICIENT,
+                    )
+                )
+                continue
+
             match match_result:
                 case MatchSuccess(matched_name=matched):
                     _handle_matched(
@@ -183,9 +214,13 @@ def run_pipeline(  # noqa: PLR0913
                     assert_never(match_result)
 
         # ── Step 7: Generate certificates ──────────────────────────────────
-        pdf_paths: list[str] = []
+        generated_paths: list[str] = []
         if eligible:
-            pdf_paths = generate_all(eligible, output_dir)
+            generated_paths = generate_all(
+                eligible,
+                output_dir,
+                options=render_options,
+            )
 
         # ── Step 9: Generate ineligibility report ──────────────────────────
         if ineligible:
@@ -196,13 +231,14 @@ def run_pipeline(  # noqa: PLR0913
         logger.info("Total CE requests: %d", len(ce_requests))
         logger.info("Eligible: %d", len(eligible))
         logger.info("Ineligible: %d", len(ineligible))
-        logger.info("Certificates generated: %d", len(pdf_paths))
+        logger.info("Certificates generated: %d", len(generated_paths))
 
         return PipelineResult(
             total_requests=len(ce_requests),
             eligible=eligible,
             ineligible=ineligible,
             errors=errors,
+            generated_paths=generated_paths,
         )
 
     except (FileNotFoundError, ZoomParseError, ValueError, KeyError, OSError) as exc:

@@ -29,7 +29,7 @@ def test_certificate_filename_removes_path_separators() -> None:
         issue_date=date(2026, 3, 21),
     )
 
-    assert certificate.output_filename == "Jones_Alice_APA_evil_2026-03-20.pdf"
+    assert certificate.output_filename == "Jones_CECertificate_Smith_2026-03-20.pdf"
 
 
 def _workbook_xml(path: Path) -> str:

@@ -14,12 +14,26 @@ if TYPE_CHECKING:
 
 _NAME_PARTS_COUNT = 2
 """Number of parts expected when splitting a full name into first/last."""
+# Keep only portable filename characters (safe on Windows, macOS, and Linux).
 _UNSAFE_FILENAME_CHARS = re.compile(r"[^A-Za-z0-9_-]+")
+_WINDOWS_RESERVED = frozenset(
+    {
+        "CON",
+        "PRN",
+        "AUX",
+        "NUL",
+        *(f"COM{i}" for i in range(1, 10)),
+        *(f"LPT{i}" for i in range(1, 10)),
+    }
+)
 
 
 def _filename_part(value: str) -> str:
     cleaned = _UNSAFE_FILENAME_CHARS.sub("_", value.strip())
-    return cleaned.strip("_") or "certificate"
+    cleaned = cleaned.strip("._") or "certificate"
+    if cleaned.upper() in _WINDOWS_RESERVED:
+        return f"_{cleaned}"
+    return cleaned
 
 
 @dataclass(frozen=True, slots=True)
@@ -72,25 +86,36 @@ class CertificateOutput:
     """Date the certificate was generated."""
 
     @property
-    def output_filename(self) -> str:
-        """Computed output filename: ``{LastName}_{FirstName}_{CEType}_{Date}.pdf``.
+    def output_basename(self) -> str:
+        """Filename stem: ``{LastName}_CECertificate_{InstructorLast}_{Date}``.
 
-        Derives first/last name from ``full_name`` by splitting on the last
-        space. Single-word names use the word as both first and last.
+        Recipient and instructor last names are taken from the final whitespace-
+        separated token. Unsafe characters (including ``@``) are sanitized.
         """
-        parts = self.full_name.rsplit(" ", 1)
-        if len(parts) == _NAME_PARTS_COUNT:
-            first, last = parts[0], parts[1]
-        else:
-            first, last = "", parts[0]
+        recipient_last = _last_name(self.full_name)
+        instructor_last = _last_name(self.instructor_name)
         date_str = self.training_date.isoformat()
-        filename_parts = [
-            _filename_part(last),
-            _filename_part(first),
-            _filename_part(str(self.ce_type)),
-            date_str,
-        ]
-        return "_".join(filename_parts) + ".pdf"
+        return "_".join(
+            [
+                _filename_part(recipient_last),
+                "CECertificate",
+                _filename_part(instructor_last),
+                date_str,
+            ]
+        )
+
+    @property
+    def output_filename(self) -> str:
+        """Preferred PDF filename (``output_basename`` + ``.pdf``)."""
+        return f"{self.output_basename}.pdf"
+
+
+def _last_name(full_name: str) -> str:
+    """Return the last whitespace-separated token of a person name."""
+    parts = full_name.strip().rsplit(" ", 1)
+    if len(parts) == _NAME_PARTS_COUNT:
+        return parts[1]
+    return parts[0] if parts and parts[0] else "Unknown"
 
 
 @unique

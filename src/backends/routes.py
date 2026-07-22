@@ -15,6 +15,7 @@ import asyncio
 import io
 import json
 import secrets
+import tempfile
 import zipfile
 from datetime import date, datetime, time, timezone
 from pathlib import Path
@@ -25,23 +26,27 @@ if TYPE_CHECKING:
 
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse, StreamingResponse
-from fpdf import FPDF
 from pydantic import BaseModel
 
+from src.generator.certificate import CertificateRenderOptions, generate_certificate
+from src.generator.zoom_host import extract_zoom_host
 from src.matcher.name_matcher import match_participants
 from src.models.certificate import (
+    CertificateOutput,
     MatchAmbiguous,
     MatchNotFound,
     MatchSuccess,
 )
 from src.models.participant import AttendanceRecord, ParticipantAttendance
+from src.models.training import CEType
 from src.parser.qualtrics import parse_qualtrics_export
 from src.parser.zoom import ZoomParseError, parse_zoom_attendance
 from src.pipeline import PipelineResult, run_pipeline
 from src.validator.attendance import validate_attendance
 
 router = APIRouter()
-_GENERATED_PDFS: dict[str, Path] = {}
+_GENERATED_FILES: dict[str, Path] = {}
+_ALLOWED_CERT_SUFFIXES = frozenset({".pdf", ".docx"})
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -84,6 +89,7 @@ class ParseResponse(BaseModel):
     ce_requests: list[ParseCERequest]
     participant_count: int
     request_count: int
+    zoom_host: str | None = None
 
 
 class MatchParticipantBrief(BaseModel):
@@ -143,6 +149,11 @@ class PreviewRequest(BaseModel):
     instructor_name: str
     license_number: str | None = None
     issue_date: date | None = None
+    is_virtual: bool = True
+    location: str | None = None
+    end_date: date | None = None
+    start_time: time | None = None
+    end_time: time | None = None
 
 
 class GenerateRequest(BaseModel):
@@ -160,147 +171,16 @@ class GenerateRequest(BaseModel):
     overrides: dict[str, str] | None = None
     overrides_path: str | None = None
     output_dir: str = "./output"
+    excluded_names: list[str] | None = None
+    is_virtual: bool = True
+    location: str | None = None
+    end_date: date | None = None
 
 
 class DownloadZipRequest(BaseModel):
     """Body for ``POST /api/download-zip``."""
 
     pdf_paths: list[str]
-
-
-# ═══════════════════════════════════════════════════════════════════════════
-# Preview PDF layout helpers (inlined from src/generator/certificate.py)
-# ═══════════════════════════════════════════════════════════════════════════
-
-_PAGE_W, _PAGE_H = 279.4, 215.9  # Letter landscape (mm)
-_PV_MARGIN = 15.0
-_PV_BORDER_INSET = 8.0
-_PV_INNER_W = _PAGE_W - 2 * _PV_MARGIN
-_PV_INNER_H = _PAGE_H - 2 * _PV_MARGIN
-_PV_BORDER_W = _PAGE_W - 2 * _PV_BORDER_INSET
-_PV_BORDER_H = _PAGE_H - 2 * _PV_BORDER_INSET
-
-_PV_FONT_TITLE = ("Helvetica", "B", 26)
-_PV_FONT_NAME = ("Helvetica", "B", 22)
-_PV_FONT_BODY = ("Helvetica", "", 14)
-_PV_FONT_DETAIL = ("Helvetica", "", 12)
-_PV_FONT_SIGNATURE = ("Helvetica", "", 11)
-
-
-def _preview_format_date(d: date) -> str:
-    """Format a date like 'March 20, 2026' (no leading zero on day)."""
-    return f"{d:%B} {d.day}, {d.year}"
-
-
-def _preview_text_line(
-    pdf: FPDF, text: str, family: str, style: str, size: int
-) -> None:
-    """Draw a centered line of text and advance Y."""
-    pdf.set_font(family, style, size)
-    _ = pdf.cell(_PV_INNER_W, 8, text, align="C", new_x="LMARGIN", new_y="NEXT")
-
-
-def _preview_vspace(pdf: FPDF, mm: float) -> None:
-    """Add vertical space."""
-    pdf.ln(mm)
-
-
-def _preview_draw_border(pdf: FPDF) -> None:
-    """Draw a double-line decorative border."""
-    pdf.set_line_width(0.4)
-    pdf.rect(_PV_BORDER_INSET, _PV_BORDER_INSET, _PV_BORDER_W, _PV_BORDER_H)
-    pdf.set_line_width(0.2)
-    inset2 = _PV_BORDER_INSET + 2
-    pdf.rect(inset2, inset2, _PV_BORDER_W - 4, _PV_BORDER_H - 4)
-
-
-def _preview_draw_signature_block(pdf: FPDF) -> None:
-    """Draw instructor signature line and date on the same row."""
-    y_sig = pdf.get_y() + 12
-    left_x = _PV_MARGIN + 20
-    right_x = _PV_MARGIN + _PV_INNER_W - 80
-
-    pdf.set_font(*_PV_FONT_SIGNATURE)
-    _ = pdf.line(left_x, y_sig, left_x + 70, y_sig)
-    _ = pdf.set_xy(left_x, y_sig + 2)
-    _ = pdf.cell(70, 5, "Instructor Signature", align="C")
-
-    _ = pdf.line(right_x, y_sig, right_x + 60, y_sig)
-    _ = pdf.set_xy(right_x, y_sig + 2)
-    _ = pdf.cell(60, 5, "Date", align="C")
-
-
-def _build_preview_pdf(  # noqa: PLR0913
-    full_name: str,
-    ce_type: str,
-    ce_credits: int,
-    training_title: str,
-    training_date: date,
-    instructor_name: str,
-    license_number: str | None,
-    issue_date: date,
-) -> bytes:
-    """Generate a single certificate PDF in memory (no file write).
-
-    Replicates the layout from ``src/generator/certificate.py`` so the
-    preview is pixel-identical to the final generated certificate.
-    """
-    pdf = FPDF(orientation="L", unit="mm", format="Letter")
-    pdf.set_auto_page_break(auto=False)
-    pdf.add_page()
-
-    _preview_draw_border(pdf)
-    _preview_vspace(pdf, 8)
-
-    _preview_text_line(pdf, "Certificate of Completion", *_PV_FONT_TITLE)
-    _preview_vspace(pdf, 2)
-    _ = pdf.set_draw_color(0)
-    _ = pdf.set_line_width(0.3)
-    mid_x = _PV_MARGIN + _PV_INNER_W / 2
-    _ = pdf.line(mid_x - 40, pdf.get_y(), mid_x + 40, pdf.get_y())
-    _preview_vspace(pdf, 6)
-
-    _preview_text_line(pdf, "This certifies that", *_PV_FONT_BODY)
-    _preview_vspace(pdf, 4)
-
-    _preview_text_line(pdf, full_name, *_PV_FONT_NAME)
-    _preview_vspace(pdf, 4)
-
-    credits_text = (
-        f"has successfully completed {ce_credits}"
-        + " Continuing Education credit hour"
-        + ("s" if ce_credits != 1 else "")
-        + f" in {ce_type}"
-    )
-    _preview_text_line(pdf, credits_text, *_PV_FONT_BODY)
-    _preview_vspace(pdf, 8)
-
-    _preview_text_line(pdf, f"Training:  {training_title}", *_PV_FONT_DETAIL)
-    _preview_vspace(pdf, 2)
-    _preview_text_line(
-        pdf, f"Date:  {_preview_format_date(training_date)}", *_PV_FONT_DETAIL
-    )
-    _preview_vspace(pdf, 2)
-    _preview_text_line(
-        pdf, f"Instructor:  {instructor_name}", *_PV_FONT_DETAIL
-    )
-
-    if license_number:
-        _preview_vspace(pdf, 2)
-        _preview_text_line(
-            pdf,
-            f"License / Certificate #:  {license_number}",
-            *_PV_FONT_DETAIL,
-        )
-
-    _preview_vspace(pdf, 4)
-    _preview_text_line(
-        pdf, f"Issued:  {_preview_format_date(issue_date)}", *_PV_FONT_DETAIL
-    )
-
-    _preview_draw_signature_block(pdf)
-
-    return bytes(pdf.output())
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -352,20 +232,28 @@ def _result_status(status: str) -> str:
             return "Attendance"
 
 
-def _register_generated_pdf(path: Path) -> str:
+def _register_generated_file(path: Path) -> str:
     resolved = path.resolve()
-    if resolved.suffix.lower() != ".pdf" or not resolved.exists() or not resolved.is_file():
-        raise HTTPException(status_code=500, detail="Generated PDF missing")
+    if (
+        resolved.suffix.lower() not in _ALLOWED_CERT_SUFFIXES
+        or not resolved.exists()
+        or not resolved.is_file()
+    ):
+        raise HTTPException(status_code=500, detail="Generated certificate file missing")
     token = secrets.token_urlsafe(24)
-    _GENERATED_PDFS[token] = resolved
+    _GENERATED_FILES[token] = resolved
     return token
 
 
-def _registered_pdf(token: str) -> Path:
-    pdf_path = _GENERATED_PDFS.get(token)
-    if pdf_path is None or not pdf_path.exists() or not pdf_path.is_file():
-        raise HTTPException(status_code=404, detail="PDF not found")
-    return pdf_path
+def _registered_file(token: str) -> Path:
+    file_path = _GENERATED_FILES.get(token)
+    if file_path is None or not file_path.exists() or not file_path.is_file():
+        raise HTTPException(status_code=404, detail="Certificate file not found")
+    return file_path
+
+
+def _clear_generated_registry() -> None:
+    _GENERATED_FILES.clear()
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -388,6 +276,7 @@ async def parse_endpoint(request: ParseRequest) -> ParseResponse:
         ce_requests_raw = await asyncio.to_thread(
             parse_qualtrics_export, request.qualtrics_path,
         )
+        zoom_host = await asyncio.to_thread(extract_zoom_host, request.zoom_path)
     except FileNotFoundError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except ZoomParseError as exc:
@@ -423,6 +312,7 @@ async def parse_endpoint(request: ParseRequest) -> ParseResponse:
         ce_requests=ce_requests,
         participant_count=len(participants),
         request_count=len(ce_requests),
+        zoom_host=zoom_host,
     )
 
 
@@ -489,30 +379,59 @@ async def match_endpoint(request: MatchRequest) -> MatchResponse:
 
 @router.post("/preview")
 async def preview_endpoint(request: PreviewRequest) -> StreamingResponse:
-    """Generate a single certificate PDF in memory and return it.
+    """Generate a single certificate preview from the official Word template.
 
-    Replicates the full certificate layout so the preview is visually
-    identical to the final output, but without writing to disk.
+    Returns a PDF when a converter is available on this platform; otherwise
+    returns the filled ``.docx`` (soft-fail) so preview never hard-depends on
+    LibreOffice/Word being installed.
     """
     issue_date = request.issue_date or datetime.now(tz=timezone.utc).date()  # noqa: UP017
 
-    pdf_bytes = await asyncio.to_thread(
-        _build_preview_pdf,
-        request.full_name,
-        request.ce_type,
-        request.ce_credits,
-        request.training_title,
-        request.training_date,
-        request.instructor_name,
-        request.license_number,
+    file_bytes, media_type, filename = await asyncio.to_thread(
+        _build_preview_certificate,
+        request,
         issue_date,
     )
 
     return StreamingResponse(
-        io.BytesIO(pdf_bytes),
-        media_type="application/pdf",
-        headers={"Content-Disposition": "inline; filename=preview.pdf"},
+        io.BytesIO(file_bytes),
+        media_type=media_type,
+        headers={"Content-Disposition": f"inline; filename={filename}"},
     )
+
+
+def _build_preview_certificate(
+    request: PreviewRequest,
+    issue_date: date,
+) -> tuple[bytes, str, str]:
+    output = CertificateOutput(
+        full_name=request.full_name,
+        ce_type=CEType(request.ce_type),
+        ce_credits=request.ce_credits,
+        training_title=request.training_title,
+        training_date=request.training_date,
+        instructor_name=request.instructor_name,
+        license_number=request.license_number,
+        issue_date=issue_date,
+    )
+    options = CertificateRenderOptions(
+        is_virtual=request.is_virtual,
+        location=request.location,
+        end_date=request.end_date,
+        session_start=request.start_time,
+        session_end=request.end_time,
+    )
+    with tempfile.TemporaryDirectory() as tmp:
+        path = Path(generate_certificate(output, tmp, options=options))
+        data = path.read_bytes()
+        suffix = path.suffix.lower()
+        if suffix == ".pdf":
+            return data, "application/pdf", path.name
+        return (
+            data,
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            path.name,
+        )
 
 
 @router.post("/generate")
@@ -550,17 +469,37 @@ async def generate_endpoint(request: GenerateRequest) -> StreamingResponse:
             overrides=request.overrides,
             overrides_path=request.overrides_path,
             output_dir=request.output_dir,
+            excluded_names=set(request.excluded_names or []),
+            is_virtual=request.is_virtual,
+            location=request.location,
+            end_date=request.end_date,
         )
 
-        certificates = [
-            {
-                "name": cert.full_name,
-                "ce_type": str(cert.ce_type),
-                "filename": cert.output_filename,
-                "path": _register_generated_pdf(Path(request.output_dir) / cert.output_filename),
-            }
-            for cert in result.eligible
-        ]
+        _clear_generated_registry()
+        path_by_stem = {
+            Path(p).stem: Path(p) for p in result.generated_paths
+        }
+        certificates = []
+        for cert in result.eligible:
+            file_path = path_by_stem.get(cert.output_basename)
+            if file_path is None:
+                # Fall back to preferred PDF name, then DOCX.
+                pdf_candidate = Path(request.output_dir) / cert.output_filename
+                docx_candidate = Path(request.output_dir) / f"{cert.output_basename}.docx"
+                if pdf_candidate.is_file():
+                    file_path = pdf_candidate
+                elif docx_candidate.is_file():
+                    file_path = docx_candidate
+                else:
+                    continue
+            certificates.append(
+                {
+                    "name": cert.full_name,
+                    "ce_type": str(cert.ce_type),
+                    "filename": file_path.name,
+                    "path": _register_generated_file(file_path),
+                }
+            )
         ineligible_entries = [
             {
                 "name": entry.name_qualtrics,
@@ -573,6 +512,9 @@ async def generate_endpoint(request: GenerateRequest) -> StreamingResponse:
             "type": "complete",
             "certificates": certificates,
             "ineligible": ineligible_entries,
+            "conversion_warning": any(
+                Path(p).suffix.lower() == ".docx" for p in result.generated_paths
+            ),
         }
         yield "data: " + json.dumps(payload, default=str) + "\n\n"
 
@@ -593,7 +535,7 @@ async def download_zip_endpoint(request: DownloadZipRequest) -> StreamingRespons
         buf = io.BytesIO()
         with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
             for token in request.pdf_paths:
-                pdf_path = _registered_pdf(token)
+                pdf_path = _registered_file(token)
                 zf.write(pdf_path, pdf_path.name)
         _ = buf.seek(0)
         return buf
@@ -608,6 +550,12 @@ async def download_zip_endpoint(request: DownloadZipRequest) -> StreamingRespons
 
 @router.get("/pdf")
 def pdf_endpoint(path: str) -> FileResponse:
-    """Return a registered generated PDF by opaque token."""
-    pdf_path = _registered_pdf(path)
-    return FileResponse(pdf_path, media_type="application/pdf")
+    """Return a registered generated certificate file by opaque token."""
+    file_path = _registered_file(path)
+    suffix = file_path.suffix.lower()
+    media = (
+        "application/pdf"
+        if suffix == ".pdf"
+        else "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    )
+    return FileResponse(file_path, media_type=media)
