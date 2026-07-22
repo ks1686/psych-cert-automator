@@ -1,182 +1,127 @@
-"""PDF certificate generation — pure-Python via ``fpdf2`` (zero external deps)."""
+"""Certificate generation — fill official Word templates, soft-fail PDF convert."""
 
 from __future__ import annotations
 
+import logging
+from dataclasses import dataclass
+from datetime import date, time
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from fpdf import FPDF
+from src.generator.convert import convert_docx_to_pdf
+from src.generator.templates import (
+    TemplateRenderContext,
+    build_replacements,
+    fill_template,
+    format_training_date,
+    resolve_template_key,
+    template_path_for,
+)
 
 if TYPE_CHECKING:
-    from datetime import date
-
     from src.models.certificate import CertificateOutput
 
-# ── Layout constants ─────────────────────────────────────────────────────────────
-_PAGE_W, _PAGE_H = 279.4, 215.9  # Letter landscape (mm)
-_MARGIN = 15.0
-_BORDER_INSET = 8.0
-_INNER_W = _PAGE_W - 2 * _MARGIN
-_INNER_H = _PAGE_H - 2 * _MARGIN
-_BORDER_W = _PAGE_W - 2 * _BORDER_INSET
-_BORDER_H = _PAGE_H - 2 * _BORDER_INSET
-
-_FONT_TITLE = ("Helvetica", "B", 26)
-_FONT_NAME = ("Helvetica", "B", 22)
-_FONT_BODY = ("Helvetica", "", 14)
-_FONT_DETAIL = ("Helvetica", "", 12)
-_FONT_SIGNATURE = ("Helvetica", "", 11)
-
-_Y = _MARGIN + 10  # starting Y position, advances as we draw
+logger = logging.getLogger(__name__)
 
 
-def _format_date(d: date) -> str:
-    """Format a date like 'March 20, 2026' (no leading zero on day)."""
-    return f"{d:%B} {d.day}, {d.year}"
+@dataclass(frozen=True, slots=True)
+class CertificateRenderOptions:
+    """Delivery / schedule options that affect template placeholders."""
+
+    is_virtual: bool = True
+    location: str | None = None
+    end_date: date | None = None
+    session_start: time | None = None
+    session_end: time | None = None
 
 
-def _text_line(pdf: FPDF, text: str, family: str, style: str, size: int) -> None:
-    """Draw a centered line of text and advance Y."""
-    pdf.set_font(family, style, size)
-    _ = pdf.cell(_INNER_W, 8, text, align="C", new_x="LMARGIN", new_y="NEXT")
+def _format_clock(value: time | None) -> str:
+    if value is None:
+        return ""
+    hour_12 = value.hour % 12 or 12
+    suffix = "AM" if value.hour < 12 else "PM"
+    return f"{hour_12}:{value.minute:02d} {suffix}"
 
 
-def _vspace(pdf: FPDF, mm: float) -> None:
-    """Add vertical space."""
-    pdf.ln(mm)
-
-
-def _draw_border(pdf: FPDF) -> None:
-    """Draw a double-line decorative border."""
-    pdf.set_line_width(0.4)
-    pdf.rect(_BORDER_INSET, _BORDER_INSET, _BORDER_W, _BORDER_H)
-    pdf.set_line_width(0.2)
-    inset2 = _BORDER_INSET + 2
-    pdf.rect(inset2, inset2, _BORDER_W - 4, _BORDER_H - 4)
-
-
-def _draw_signature_block(pdf: FPDF) -> None:
-    """Draw instructor signature line and date on the same row."""
-    y_sig = pdf.get_y() + 12
-    left_x = _MARGIN + 20
-    right_x = _MARGIN + _INNER_W - 80
-
-    pdf.set_font(*_FONT_SIGNATURE)
-    _ = pdf.line(left_x, y_sig, left_x + 70, y_sig)
-    _ = pdf.set_xy(left_x, y_sig + 2)
-    _ = pdf.cell(70, 5, "Instructor Signature", align="C")
-
-    _ = pdf.line(right_x, y_sig, right_x + 60, y_sig)
-    _ = pdf.set_xy(right_x, y_sig + 2)
-    _ = pdf.cell(60, 5, "Date", align="C")
+def _time_display(options: CertificateRenderOptions) -> str:
+    start = _format_clock(options.session_start)
+    end = _format_clock(options.session_end)
+    if start and end:
+        return f"{start} – {end}"
+    return start or end
 
 
 def generate_certificate(
     output: CertificateOutput,
     output_dir: str,
+    *,
+    options: CertificateRenderOptions | None = None,
 ) -> str:
-    """Generate a single PDF certificate from a ``CertificateOutput``.
+    """Generate one certificate from the official Word template for its CE type.
 
-    Renders a professional landscape certificate with double border, the
-    recipient's name prominently centered, training details, CE type/credits,
-    optional license number, and a signature block.
+    Writes a filled ``.docx``. When LibreOffice or Microsoft Word is available,
+    also converts to PDF and returns the PDF path. Otherwise returns the
+    ``.docx`` path and logs a warning.
 
     Args:
         output: Fully populated certificate data.
-        output_dir: Directory where the PDF is written.
+        output_dir: Directory where files are written.
+        options: Optional delivery / multi-day render settings.
 
     Returns:
-        Absolute path to the generated PDF file.
+        Absolute path to the generated PDF or DOCX file.
     """
-    pdf = FPDF(orientation="L", unit="mm", format="Letter")
-    pdf.set_auto_page_break(auto=False)
-    pdf.add_page()
-
-    # ── Border ──
-    _draw_border(pdf)
-    _vspace(pdf, 8)
-
-    # ── Title ──
-    _text_line(pdf, "Certificate of Completion", *_FONT_TITLE)
-    _vspace(pdf, 2)
-    _ = pdf.set_draw_color(0)
-    _ = pdf.set_line_width(0.3)
-    mid_x = _MARGIN + _INNER_W / 2
-    _ = pdf.line(mid_x - 40, pdf.get_y(), mid_x + 40, pdf.get_y())
-    _vspace(pdf, 6)
-
-    # ── Body ──
-    _text_line(pdf, "This certifies that", *_FONT_BODY)
-    _vspace(pdf, 4)
-
-    _text_line(pdf, output.full_name, *_FONT_NAME)
-    _vspace(pdf, 4)
-
-    credits_text = (
-        f"has successfully completed {output.ce_credits}"
-        + " Continuing Education credit hour"
-        + ("s" if output.ce_credits != 1 else "")
-        + f" in {output.ce_type}"
-    )
-    _text_line(pdf, credits_text, *_FONT_BODY)
-    _vspace(pdf, 8)
-
-    # ── Training details ──
-    _text_line(pdf, f"Training:  {output.training_title}", *_FONT_DETAIL)
-    _vspace(pdf, 2)
-    _text_line(
-        pdf,
-        f"Date:  {_format_date(output.training_date)}",
-        *_FONT_DETAIL,
-    )
-    _vspace(pdf, 2)
-    _text_line(
-        pdf,
-        f"Instructor:  {output.instructor_name}",
-        *_FONT_DETAIL,
-    )
-
-    if output.license_number:
-        _vspace(pdf, 2)
-        _text_line(
-            pdf,
-            f"License / Certificate #:  {output.license_number}",
-            *_FONT_DETAIL,
-        )
-
-    _vspace(pdf, 4)
-    _text_line(
-        pdf,
-        f"Issued:  {_format_date(output.issue_date)}",
-        *_FONT_DETAIL,
-    )
-
-    # ── Signature block ──
-    _draw_signature_block(pdf)
-
-    # ── Save ──
+    render = options or CertificateRenderOptions()
     out_dir = Path(output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
-    filepath = out_dir / output.output_filename
-    pdf.output(str(filepath))
-    return str(filepath.resolve())
+
+    key = resolve_template_key(str(output.ce_type))
+    template = template_path_for(str(output.ce_type))
+    date_display = format_training_date(output.training_date, render.end_date)
+    ctx = TemplateRenderContext(
+        full_name=output.full_name,
+        training_title=output.training_title,
+        instructor_name=output.instructor_name,
+        ce_credits=output.ce_credits,
+        license_number=output.license_number,
+        date_display=date_display,
+        time_display=_time_display(render),
+        is_virtual=render.is_virtual,
+        location=render.location,
+    )
+    replacements = build_replacements(key, ctx)
+
+    docx_path = out_dir / f"{output.output_basename}.docx"
+    fill_template(template, docx_path, replacements)
+
+    pdf_path = convert_docx_to_pdf(docx_path)
+    if pdf_path is not None:
+        return str(pdf_path.resolve())
+
+    logger.warning(
+        "Kept Word document for %s (PDF converter not available)",
+        docx_path.name,
+    )
+    return str(docx_path.resolve())
 
 
 def generate_all(
     requests: list[CertificateOutput],
     output_dir: str,
+    *,
+    options: CertificateRenderOptions | None = None,
 ) -> list[str]:
-    """Generate PDFs for a batch of certificate requests.
+    """Generate certificates for a batch of eligible outputs.
 
     Args:
-        requests: One ``CertificateOutput`` per certificate to generate.
-        output_dir: Directory where all generated PDFs are written.
+        requests: One ``CertificateOutput`` per certificate.
+        output_dir: Directory where generated files are written.
+        options: Shared delivery / schedule settings for the batch.
 
     Returns:
-        List of absolute paths to the generated PDFs, in order of *requests*.
+        Absolute paths to generated PDF or DOCX files, in request order.
     """
     results: list[str] = []
     for req in requests:
-        pdf_path = generate_certificate(req, output_dir)
-        results.append(pdf_path)
+        results.append(generate_certificate(req, output_dir, options=options))
     return results

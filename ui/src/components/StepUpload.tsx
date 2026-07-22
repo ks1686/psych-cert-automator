@@ -47,6 +47,7 @@ interface ParseResponse {
   ce_requests: CERequest[];
   participant_count: number;
   request_count: number;
+  zoom_host?: string | null;
 }
 
 export interface UploadData {
@@ -66,6 +67,8 @@ export interface UploadData {
   sessionStart: string;
   /** Latest leave time across all participants (ISO 8601) */
   sessionEnd: string;
+  /** Zoom meeting host display name, when detectable */
+  zoomHost: string | null;
 }
 
 // ── Props ────────────────────────────────────────────────────────────────────
@@ -123,6 +126,7 @@ export default function StepUpload({
           ce_requests: initialData.ceRequests,
           participant_count: initialData.participantCount,
           request_count: initialData.requestCount,
+          zoom_host: initialData.zoomHost,
         }
       : null,
   );
@@ -216,6 +220,7 @@ export default function StepUpload({
       requestCount: parseResult.request_count,
       sessionStart: parseResult.session_start,
       sessionEnd: parseResult.session_end,
+      zoomHost: parseResult.zoom_host ?? null,
     });
   }, [onNext, zoomPath, qualtricsPath, parseResult]);
 
@@ -227,7 +232,7 @@ export default function StepUpload({
   const ceTypeColors: Record<string, string> = {
     APA: "bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-300",
     NASP: "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-300",
-    BCBA: "bg-purple-100 text-purple-800 dark:bg-purple-900/30 dark:text-purple-300",
+    NY: "bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-300",
   };
 
   function ceVariant(ceType: string): string {

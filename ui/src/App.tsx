@@ -83,16 +83,19 @@ function deriveTrainingMetadata(
   const ceTypes: string[] = [];
   if (metadata.ceTypes.apa) ceTypes.push("APA");
   if (metadata.ceTypes.nasp) ceTypes.push("NASP");
-  if (metadata.ceTypes.bcba) ceTypes.push("BCBA");
+  if (metadata.ceTypes.ny) ceTypes.push("NY");
 
   return {
     title: metadata.title,
     date: metadata.date,
+    end_date: metadata.isMultiDay && metadata.endDate ? metadata.endDate : null,
     instructor_name: metadata.instructor,
     ce_credits: metadata.ceCredits,
     ce_types_offered: ceTypes,
     session_start: metadata.startTime,
     session_end: metadata.endTime,
+    is_virtual: metadata.isVirtual,
+    location: metadata.isVirtual ? null : metadata.location.trim() || null,
   };
 }
 
@@ -320,10 +323,12 @@ function WizardApp() {
       const matchData: MatchData = {
         matches: body.matches,
         overrides: {},
+        excludedNames: [],
         zoomParticipants: participants,
         ceRequests: requests,
         sessionStart: data.sessionStart,
         sessionEnd: data.sessionEnd,
+        zoomHost: data.zoomHost,
       };
 
       setWizardState((prev) => ({ ...prev, matchData }));
