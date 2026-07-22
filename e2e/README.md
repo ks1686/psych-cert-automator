@@ -1,53 +1,64 @@
 # E2E Tests
 
-Playwright end-to-end tests for the Psych Cert Gen Tauri application.
+Layered Playwright coverage for the Psych Cert Gen wizard.
 
-## Quick Start
+| Suite | Command | Backend | Notes |
+|-------|---------|---------|-------|
+| Mock e2e | `bun run test:e2e:mock` | Stubbed via `page.route` | Default `bun run test:e2e`; starts Vite with `VITE_E2E=1` |
+| Integration e2e | `bun run test:e2e:integration` | Real FastAPI on `:8008` | Uses `tests/fixtures/*.xlsx`; soft-fail PDF → `.docx` OK |
+| Tauri smoke | `bun run test:e2e:tauri` | Sidecar + Tauri | **Manual / nightly only** — not in PR CI |
+
+## Quick Start (mock)
 
 ```sh
-# 1. Install dependencies (first time only)
 bun install
-
-# 2. Start the FastAPI backend
-uv run uvicorn certgen:app --port 8008
-
-# 3. Start the Tauri app in dev mode (separate terminal)
-bun run tauri dev
-
-# 4. Run the tests
-bun run test:e2e
+bunx playwright install chromium
+bun run test:e2e:mock
 ```
 
-## Test Scenarios
+## Integration (real FastAPI)
 
-| # | Scenario | File |
-|---|----------|------|
-| 1 | Full happy path — complete all 4 steps, verify results | `wizard.spec.ts` |
-| 2 | Step 1 validation — empty fields, invalid date, end before start | `wizard.spec.ts` |
-| 3 | Step 2 edge cases — missing file, corrupted xlsx handling | `wizard.spec.ts` |
-| 4 | Step 3 match review — ambiguous correction, not-found match, skip | `wizard.spec.ts` |
-| 5 | Step 4 preview — preview loads, progress bar, results table | `wizard.spec.ts` |
-| 6 | Session save/load — save session, reload, verify fields restored | `wizard.spec.ts` |
-| 7 | Dark mode toggle — verify theme switches | `wizard.spec.ts` |
-| 8 | Startup timeout — simulate backend failure, verify error screen | `wizard.spec.ts` |
+```sh
+bun install
+uv sync
+bunx playwright install chromium
+bun run test:e2e:integration
+```
+
+The integration Playwright config starts FastAPI and Vite automatically.
+For a manual split:
+
+```sh
+uv run python src/backends/main.py &
+VITE_E2E=1 bun run test:e2e:integration
+```
 
 ## Architecture
 
 | Component | Endpoint |
 |-----------|----------|
-| Tauri WebDriver | `http://127.0.0.1:4444` |
-| Vite dev server | `http://localhost:1420` |
-| FastAPI backend | `http://localhost:8008` |
+| Vite (browser e2e) | `http://127.0.0.1:1420` |
+| FastAPI backend | `http://127.0.0.1:8008` |
+| Tauri WebDriver (manual) | `http://127.0.0.1:4444` |
 
-The Playwright config at `e2e/playwright.config.ts` is configured for Chromium
-desktop with a 1200×950 viewport matching the Tauri window. Tauri manages its own
-application process, so no `webServer` block is needed.
+When `VITE_E2E=1`, Vite aliases `@tauri-apps/plugin-dialog` to
+`ui/src/test/e2e-dialog-stub.ts`. Tests seed `window.__E2E_PATHS__` and click
+the real Select Zoom / Select Qualtrics buttons — no product test UI.
+
+Shared Playwright policy lives in `e2e/playwright.base.ts`.
 
 ## Writing New Tests
 
 - Prefer `page.getByRole()` for buttons, inputs, and headings.
 - Use `page.locator('#id')` for elements with DOM IDs (form fields).
-- Use `page.getByText()` for text content assertions.
-- Avoid `page.waitForTimeout()` — use `expect().toBeVisible()` or
-  `page.waitForSelector()` instead.
-- Run with `--debug` for headed mode: `bun run test:e2e --debug`
+- Use shared helpers in `e2e/helpers/wizard.ts` (`fillStep1Valid`, `parseWithE2ePaths`, `advanceToGenerateStep`).
+- Avoid `page.waitForTimeout()` — use `expect().toBeVisible()`.
+- Run headed: `bun run test:e2e:mock -- --headed`
+
+## Tauri smoke (manual)
+
+PR CI does **not** run Tauri WebDriver. For local smoke against the desktop shell:
+
+1. `uv run python src/backends/main.py`
+2. `bun run tauri dev`
+3. `bun run test:e2e:tauri` (expects the Vite surface at `:1420`; full WebDriver wiring is optional — see comments in `e2e/playwright.config.ts`)
