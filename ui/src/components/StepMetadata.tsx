@@ -34,11 +34,15 @@ interface SavedSession {
   id: number;
   title: string;
   date: string;
+  end_date: string | null;
+  is_multi_day: boolean;
   instructor: string;
   ce_credits: number;
   ce_types: string;
   start_time: string;
   end_time: string;
+  is_virtual: boolean;
+  location: string | null;
 }
 
 interface StepMetadataProps {
@@ -164,11 +168,15 @@ export default function StepMetadata({
         body: JSON.stringify({
           title: formData.title,
           date: formData.date,
+          end_date: formData.isMultiDay ? formData.endDate || null : null,
+          is_multi_day: formData.isMultiDay,
           instructor: formData.instructor,
           ce_credits: formData.ceCredits,
           ce_types: ceTypesToString(formData.ceTypes),
           start_time: formData.startTime,
           end_time: formData.endTime,
+          is_virtual: formData.isVirtual,
+          location: formData.isVirtual ? null : formData.location,
         }),
       });
       if (!response.ok) {
@@ -203,15 +211,15 @@ export default function StepMetadata({
     setFormData({
       title: session.title,
       date: session.date,
-      endDate: "",
-      isMultiDay: false,
+      endDate: session.end_date ?? "",
+      isMultiDay: session.is_multi_day === true,
       instructor: session.instructor,
       ceCredits: session.ce_credits,
       ceTypes: parseCeTypes(session.ce_types),
       startTime: session.start_time,
       endTime: session.end_time,
-      isVirtual: true,
-      location: "",
+      isVirtual: session.is_virtual !== false,
+      location: session.location ?? "",
     });
     setShowSessions(false);
   }, []);
