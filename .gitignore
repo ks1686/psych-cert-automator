@@ -36,11 +36,26 @@ node_modules
 ui/dist
 *.local
 
+# Vitest
+coverage/
+.nyc_output/
+
+# Playwright
+test-results/
+playwright-report/
+blob-report/
+e2e/report/
+playwright/.cache/
+
+# Superpowers SDD scratch
+.superpowers/
+
 # Logs
 logs
 *.log
 npm-debug.log*
 pnpm-debug.log*
+bun-debug.log*
 
 # Editor directories and files
 .vscode/*

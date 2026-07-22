@@ -11,6 +11,7 @@
     "tauri": "tauri",
     "test:unit": "vitest run",
     "test:unit:watch": "vitest",
+    "test:unit:coverage": "vitest run --coverage",
     "test:e2e": "playwright test --config=e2e/playwright.config.ts"
   },
   "dependencies": {
