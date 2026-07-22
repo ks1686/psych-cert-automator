@@ -118,6 +118,68 @@ def _last_name(full_name: str) -> str:
     return parts[0] if parts and parts[0] else "Unknown"
 
 
+def _first_name(full_name: str) -> str:
+    """Return everything before the last whitespace-separated token."""
+    parts = full_name.strip().rsplit(" ", 1)
+    if len(parts) == _NAME_PARTS_COUNT:
+        return parts[0]
+    return ""
+
+
+def allocate_unique_basenames(outputs: list[CertificateOutput]) -> list[str]:
+    """Assign unique filename stems for a certificate batch.
+
+    Prefers ``{Last}_CECertificate_{InstructorLast}_{Date}``. On collision
+    (same last name, identical full names, or multiple CE types), disambiguates
+    with first name, then CE type, then a numeric suffix.
+    """
+    used: set[str] = set()
+    assigned: list[str] = []
+    for output in outputs:
+        for candidate in _basename_candidates(output):
+            if candidate not in used:
+                used.add(candidate)
+                assigned.append(candidate)
+                break
+        else:
+            # Extremely unlikely: all candidates taken — numeric fallback.
+            n = 2
+            base = output.output_basename
+            while f"{base}_{n}" in used:
+                n += 1
+            chosen = f"{base}_{n}"
+            used.add(chosen)
+            assigned.append(chosen)
+    return assigned
+
+
+def _basename_candidates(output: CertificateOutput) -> list[str]:
+    preferred = output.output_basename
+    recipient_last = _filename_part(_last_name(output.full_name))
+    recipient_first = _filename_part(_first_name(output.full_name))
+    instructor_last = _filename_part(_last_name(output.instructor_name))
+    date_str = output.training_date.isoformat()
+    ce_part = _filename_part(str(output.ce_type))
+
+    with_first = "_".join(
+        part
+        for part in (
+            recipient_last,
+            recipient_first or None,
+            "CECertificate",
+            instructor_last,
+            date_str,
+        )
+        if part
+    )
+    return [
+        preferred,
+        with_first,
+        f"{preferred}_{ce_part}",
+        f"{with_first}_{ce_part}",
+    ]
+
+
 @unique
 class EligibilityStatus(StrEnum):
     """Outcome of attendance validation for a CE request."""
