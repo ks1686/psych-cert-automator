@@ -6,7 +6,6 @@ import logging
 from dataclasses import dataclass
 from datetime import date, time
 from pathlib import Path
-from typing import TYPE_CHECKING
 
 from src.generator.convert import convert_docx_to_pdf
 from src.generator.templates import (
@@ -17,9 +16,7 @@ from src.generator.templates import (
     resolve_template_key,
     template_path_for,
 )
-
-if TYPE_CHECKING:
-    from src.models.certificate import CertificateOutput
+from src.models.certificate import CertificateOutput, allocate_unique_basenames
 
 logger = logging.getLogger(__name__)
 
@@ -56,6 +53,7 @@ def generate_certificate(
     output_dir: str,
     *,
     options: CertificateRenderOptions | None = None,
+    basename: str | None = None,
 ) -> str:
     """Generate one certificate from the official Word template for its CE type.
 
@@ -67,6 +65,8 @@ def generate_certificate(
         output: Fully populated certificate data.
         output_dir: Directory where files are written.
         options: Optional delivery / multi-day render settings.
+        basename: Optional unique filename stem (without extension). Defaults
+            to ``output.output_basename``.
 
     Returns:
         Absolute path to the generated PDF or DOCX file.
@@ -91,7 +91,8 @@ def generate_certificate(
     )
     replacements = build_replacements(key, ctx)
 
-    docx_path = out_dir / f"{output.output_basename}.docx"
+    stem = basename or output.output_basename
+    docx_path = out_dir / f"{stem}.docx"
     fill_template(template, docx_path, replacements)
 
     pdf_path = convert_docx_to_pdf(docx_path)
@@ -113,6 +114,9 @@ def generate_all(
 ) -> list[str]:
     """Generate certificates for a batch of eligible outputs.
 
+    Assigns unique basenames within the batch so identical last names (or the
+    same person requesting multiple CE types) do not overwrite each other.
+
     Args:
         requests: One ``CertificateOutput`` per certificate.
         output_dir: Directory where generated files are written.
@@ -121,7 +125,10 @@ def generate_all(
     Returns:
         Absolute paths to generated PDF or DOCX files, in request order.
     """
+    stems = allocate_unique_basenames(requests)
     results: list[str] = []
-    for req in requests:
-        results.append(generate_certificate(req, output_dir, options=options))
+    for req, stem in zip(requests, stems, strict=True):
+        results.append(
+            generate_certificate(req, output_dir, options=options, basename=stem)
+        )
     return results

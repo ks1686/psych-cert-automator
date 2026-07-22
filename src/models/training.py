@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import date, time
-from typing import ClassVar, NewType, TypedDict, override
+from typing import ClassVar, NewType, NotRequired, TypedDict, override
 
 from pydantic import BaseModel, ConfigDict
 
@@ -26,7 +26,9 @@ class TrainingConfigDict(TypedDict):
     ce_types_offered: list[str]
     session_start: str
     session_end: str
-
+    end_date: NotRequired[str | None]
+    is_virtual: NotRequired[bool]
+    location: NotRequired[str | None]
 
 @dataclass(frozen=True, slots=True)
 class TrainingConfigError(Exception):
@@ -76,12 +78,26 @@ class TrainingMetadata(BaseModel):
     session_end: time
     """Session end time (local)."""
 
+    end_date: date | None = None
+    """Optional multi-day end date (inclusive)."""
+
+    is_virtual: bool = True
+    """When True, certificates use virtual Location/Format strings."""
+
+    location: str | None = None
+    """In-person location text when ``is_virtual`` is False."""
+
     @property
     def total_duration_minutes(self) -> int:
         """Total session duration in minutes (session_end minus session_start)."""
         start_mins = self.session_start.hour * 60 + self.session_start.minute
         end_mins = self.session_end.hour * 60 + self.session_end.minute
         return end_mins - start_mins
+
+    @property
+    def is_multi_day(self) -> bool:
+        """True when an end date is set and differs from the start date."""
+        return self.end_date is not None and self.end_date != self.date
 
     @classmethod
     def from_config(cls, config: TrainingConfigDict) -> TrainingMetadata:
@@ -147,6 +163,34 @@ class TrainingMetadata(BaseModel):
                 reason=f"invalid time (expected HH:MM): {e}",
             ) from e
 
+        parsed_end_date: date | None = None
+        end_date_raw = config.get("end_date")
+        if end_date_raw:
+            try:
+                parsed_end_date = date.fromisoformat(end_date_raw)
+            except (ValueError, TypeError) as e:
+                raise TrainingConfigError(
+                    field="end_date",
+                    value=str(end_date_raw),
+                    reason=f"invalid date (expected YYYY-MM-DD): {e}",
+                ) from e
+            if parsed_end_date < parsed_date:
+                raise TrainingConfigError(
+                    field="end_date",
+                    value=str(end_date_raw),
+                    reason="must be on or after date",
+                )
+
+        is_virtual = config.get("is_virtual", True)
+        location_raw = config.get("location")
+        location = location_raw.strip() if isinstance(location_raw, str) and location_raw.strip() else None
+        if not is_virtual and not location:
+            raise TrainingConfigError(
+                field="location",
+                value=str(location_raw),
+                reason="required for in-person events",
+            )
+
         return cls(
             title=title,
             date=parsed_date,
@@ -155,4 +199,7 @@ class TrainingMetadata(BaseModel):
             ce_types_offered=ce_types,
             session_start=parsed_start,
             session_end=parsed_end,
+            end_date=parsed_end_date,
+            is_virtual=is_virtual,
+            location=location,
         )

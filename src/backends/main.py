@@ -92,6 +92,10 @@ class _SessionRequest(BaseModel):
     ce_types: str
     start_time: str
     end_time: str
+    end_date: str | None = None
+    is_multi_day: bool = False
+    is_virtual: bool = True
+    location: str | None = None
 
 
 def _slugify(text: str) -> str:
@@ -103,9 +107,9 @@ def _slugify(text: str) -> str:
 
 
 @app.get("/api/sessions")
-async def list_sessions() -> list[dict[str, str | int]]:
+async def list_sessions() -> list[dict[str, str | int | bool | None]]:
     """Return metadata for every saved session file."""
-    sessions: list[dict[str, str | int]] = []
+    sessions: list[dict[str, str | int | bool | None]] = []
     if not SESSIONS_DIR.exists():
         return sessions
     for session_id, f in enumerate(sorted(SESSIONS_DIR.glob("*.json"))):
@@ -113,16 +117,21 @@ async def list_sessions() -> list[dict[str, str | int]]:
             session = SessionConfig.load(f)
         except (json.JSONDecodeError, OSError, TypeError, ValueError):
             continue
+        meta = session.metadata
         sessions.append(
             {
                 "id": session_id,
-                "title": session.metadata.title,
-                "date": session.metadata.date.isoformat(),
-                "instructor": session.metadata.instructor_name,
-                "ce_credits": session.metadata.ce_credits,
-                "ce_types": ",".join(sorted(session.metadata.ce_types_offered)),
-                "start_time": session.metadata.session_start.isoformat(timespec="minutes"),
-                "end_time": session.metadata.session_end.isoformat(timespec="minutes"),
+                "title": meta.title,
+                "date": meta.date.isoformat(),
+                "end_date": meta.end_date.isoformat() if meta.end_date else None,
+                "is_multi_day": meta.is_multi_day,
+                "instructor": meta.instructor_name,
+                "ce_credits": meta.ce_credits,
+                "ce_types": ",".join(sorted(meta.ce_types_offered)),
+                "start_time": meta.session_start.isoformat(timespec="minutes"),
+                "end_time": meta.session_end.isoformat(timespec="minutes"),
+                "is_virtual": meta.is_virtual,
+                "location": meta.location,
                 "name": f.stem,
                 "saved_at": session.saved_at.isoformat(),
                 "path": str(f),
@@ -135,6 +144,7 @@ async def list_sessions() -> list[dict[str, str | int]]:
 async def create_session(session_request: _SessionRequest) -> dict[str, str]:
     """Create and persist a new certificate-generation session."""
     SESSIONS_DIR.mkdir(parents=True, exist_ok=True)
+    end_date = session_request.end_date if session_request.is_multi_day else None
     metadata = TrainingMetadata.from_config(
         {
             "title": session_request.title,
@@ -148,6 +158,9 @@ async def create_session(session_request: _SessionRequest) -> dict[str, str]:
             ],
             "session_start": session_request.start_time,
             "session_end": session_request.end_time,
+            "end_date": end_date,
+            "is_virtual": session_request.is_virtual,
+            "location": None if session_request.is_virtual else session_request.location,
         }
     )
     session = SessionConfig(metadata=metadata)

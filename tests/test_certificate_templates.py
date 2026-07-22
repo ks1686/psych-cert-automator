@@ -63,6 +63,50 @@ def test_output_filename_sanitizes_at_sign() -> None:
     assert out.output_basename.startswith("O_Brien_CECertificate_")
 
 
+def test_allocate_unique_basenames_disambiguates_same_last_name() -> None:
+    from src.models.certificate import allocate_unique_basenames
+
+    shared = dict(
+        ce_credits=3,
+        training_title="T",
+        training_date=date(2026, 3, 20),
+        instructor_name="Dr. Jane Smith",
+        license_number=None,
+        issue_date=date(2026, 3, 21),
+    )
+    outputs = [
+        CertificateOutput(full_name="Alice Jones", ce_type=CEType("APA"), **shared),
+        CertificateOutput(full_name="Bob Jones", ce_type=CEType("APA"), **shared),
+        CertificateOutput(full_name="Alice Jones", ce_type=CEType("NASP"), **shared),
+    ]
+    stems = allocate_unique_basenames(outputs)
+    assert len(stems) == len(set(stems))
+    assert stems[0] == "Jones_CECertificate_Smith_2026-03-20"
+    assert "Bob" in stems[1] or stems[1].endswith("_APA") or stems[1] != stems[0]
+    assert stems[2] != stems[0]
+
+
+def test_allocate_unique_basenames_identical_full_names() -> None:
+    from src.models.certificate import allocate_unique_basenames
+
+    shared = dict(
+        ce_type=CEType("APA"),
+        ce_credits=3,
+        training_title="T",
+        training_date=date(2026, 3, 20),
+        instructor_name="Dr. Pat Lee",
+        license_number=None,
+        issue_date=date(2026, 3, 21),
+    )
+    outputs = [
+        CertificateOutput(full_name="Sam Sam", **shared),
+        CertificateOutput(full_name="Sam Sam", **shared),
+    ]
+    stems = allocate_unique_basenames(outputs)
+    assert stems[0] != stems[1]
+    assert stems[0] == "Sam_CECertificate_Lee_2026-03-20"
+
+
 def test_format_training_date_range() -> None:
     assert format_training_date(date(2026, 3, 18), date(2026, 3, 20)) == (
         "March 18–20, 2026"
