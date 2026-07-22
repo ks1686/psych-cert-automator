@@ -1,0 +1,52 @@
+{
+  "matches": [
+    {
+      "kind": "success",
+      "qualtrics_name": "Alex Rivera",
+      "zoom_name": "Alex Rivera",
+      "confidence": 1.0,
+      "candidates": null,
+      "attendance": {
+        "is_eligible": true,
+        "late_join": 0,
+        "early_leave": 0,
+        "gaps": 0,
+        "total_missed": 0,
+        "total_attended": 180,
+        "failure_reason": null
+      }
+    },
+    {
+      "kind": "success",
+      "qualtrics_name": "Sam Patel",
+      "zoom_name": "Sam Patel",
+      "confidence": 1.0,
+      "candidates": null,
+      "attendance": {
+        "is_eligible": true,
+        "late_join": 2,
+        "early_leave": 2,
+        "gaps": 0,
+        "total_missed": 4,
+        "total_attended": 176,
+        "failure_reason": null
+      }
+    },
+    {
+      "kind": "success",
+      "qualtrics_name": "Jessica Benas",
+      "zoom_name": "Jessica Benas",
+      "confidence": 1.0,
+      "candidates": null,
+      "attendance": {
+        "is_eligible": true,
+        "late_join": 0,
+        "early_leave": 0,
+        "gaps": 0,
+        "total_missed": 0,
+        "total_attended": 190,
+        "failure_reason": null
+      }
+    }
+  ]
+}

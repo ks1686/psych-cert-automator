@@ -1,0 +1,50 @@
+{
+  "session_start": "2026-03-20T09:00:00",
+  "session_end": "2026-03-20T12:00:00",
+  "participants": [
+    {
+      "name_raw": "Jessica Benas",
+      "first_join": "2026-03-20T08:55:00",
+      "last_leave": "2026-03-20T12:05:00",
+      "total_attended_minutes": 190,
+      "segment_count": 1
+    },
+    {
+      "name_raw": "Alex Rivera",
+      "first_join": "2026-03-20T09:00:00",
+      "last_leave": "2026-03-20T12:00:00",
+      "total_attended_minutes": 180,
+      "segment_count": 1
+    },
+    {
+      "name_raw": "Sam Patel",
+      "first_join": "2026-03-20T09:02:00",
+      "last_leave": "2026-03-20T11:58:00",
+      "total_attended_minutes": 176,
+      "segment_count": 1
+    }
+  ],
+  "ce_requests": [
+    {
+      "name_on_certificate": "Alex Rivera",
+      "email": "alex@example.com",
+      "ce_type": "APA",
+      "license_number": null
+    },
+    {
+      "name_on_certificate": "Sam Patel",
+      "email": "sam@example.com",
+      "ce_type": "NASP",
+      "license_number": "12345"
+    },
+    {
+      "name_on_certificate": "Jessica Benas",
+      "email": "jessica@example.com",
+      "ce_type": "APA",
+      "license_number": null
+    }
+  ],
+  "participant_count": 3,
+  "request_count": 3,
+  "zoom_host": "Jessica Benas"
+}
