@@ -38,11 +38,14 @@ import type { UploadData } from "@/components/StepUpload";
 export interface TrainingMetadata {
   title: string;
   date: string;
+  end_date: string | null;
   instructor_name: string;
   ce_credits: number;
   ce_types_offered: string[];
   session_start: string;
   session_end: string;
+  is_virtual: boolean;
+  location: string | null;
 }
 
 export interface CertificateResult {
@@ -74,6 +77,7 @@ interface SSECompleteEvent {
   type: "complete";
   certificates: CertificateResult[];
   ineligible: IneligibleResult[];
+  conversion_warning?: boolean;
 }
 
 interface SSEErrorEvent {
@@ -120,10 +124,12 @@ const API_BASE = "http://127.0.0.1:8008";
 
 function resolveEligibleEntries(matchData: MatchData): EligibleEntry[] {
   const entries: EligibleEntry[] = [];
+  const excluded = new Set(matchData.excludedNames);
 
   for (const match of matchData.matches) {
     if (match.kind !== "success") continue;
     if (!match.attendance?.is_eligible) continue;
+    if (excluded.has(match.qualtrics_name)) continue;
 
     // Find corresponding CE requests for this Qualtrics name.
     // A single person may have multiple CE requests (one per CE type).
@@ -226,6 +232,8 @@ export default function StepGenerate({
 
   const [certificates, setCertificates] = useState<CertificateResult[]>([]);
   const [ineligible, setIneligible] = useState<IneligibleResult[]>([]);
+  const [conversionWarning, setConversionWarning] = useState(false);
+  const [previewIsPdf, setPreviewIsPdf] = useState(true);
 
   // ── Ineligibility table filter & sort ────────────────────────────────────
 
@@ -258,6 +266,11 @@ export default function StepGenerate({
           training_date: trainingMetadata.date,
           instructor_name: trainingMetadata.instructor_name,
           license_number: first.license_number,
+          is_virtual: trainingMetadata.is_virtual,
+          location: trainingMetadata.location,
+          end_date: trainingMetadata.end_date,
+          start_time: trainingMetadata.session_start || null,
+          end_time: trainingMetadata.session_end || null,
         }),
       });
 
@@ -266,7 +279,9 @@ export default function StepGenerate({
         throw new Error(`Preview failed (${response.status}): ${text}`);
       }
 
+      const contentType = response.headers.get("content-type") ?? "";
       const buffer = await response.arrayBuffer();
+      setPreviewIsPdf(contentType.includes("pdf"));
       setPreviewPdfBytes(new Uint8Array(buffer));
     } catch (err) {
       setPreviewError(
@@ -309,6 +324,13 @@ export default function StepGenerate({
             Object.keys(matchData.overrides).length > 0
               ? matchData.overrides
               : undefined,
+          excluded_names:
+            matchData.excludedNames.length > 0
+              ? matchData.excludedNames
+              : undefined,
+          is_virtual: trainingMetadata.is_virtual,
+          location: trainingMetadata.location,
+          end_date: trainingMetadata.end_date,
           output_dir: "./output",
         }),
       });
@@ -383,7 +405,13 @@ export default function StepGenerate({
       setPhase("initial");
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [eligibleEntries, matchData.overrides, trainingMetadata, uploadData]);
+  }, [
+    eligibleEntries,
+    matchData.overrides,
+    matchData.excludedNames,
+    trainingMetadata,
+    uploadData,
+  ]);
 
   // SSE event handler (defined inside component so it can close over setters)
   function handleSSEEvent(event: SSEEvent) {
@@ -406,6 +434,7 @@ export default function StepGenerate({
             ? event.ineligible
             : derivedIneligible,
         );
+        setConversionWarning(event.conversion_warning === true);
         setPhase("complete");
         setProgressPercent(100);
         setProgressLabel("Generation complete");
@@ -415,6 +444,10 @@ export default function StepGenerate({
         setGenError(event.message);
         setPhase("initial");
         break;
+      }
+      default: {
+        const _exhaustive: never = event;
+        return _exhaustive;
       }
     }
   }
@@ -578,24 +611,30 @@ export default function StepGenerate({
               </Button>
             </div>
 
-            {previewPdfBytes && (
+            {previewPdfBytes && previewIsPdf && (
               <div className="rounded-md border bg-muted/20 p-2">
                 <PdfPreview pdfBytes={previewPdfBytes} />
               </div>
+            )}
+            {previewPdfBytes && !previewIsPdf && (
+              <p className="text-sm text-muted-foreground">
+                Preview returned a Word document (PDF converter not available on
+                this machine). Generation will still write filled certificates.
+              </p>
             )}
           </div>
         )}
 
         {/* ── Generate sub-section ──────────────────────────────────────── */}
-        {phase !== "complete" && (
-          <div className="space-y-4 rounded-md border p-4">
+        <div className="space-y-4 rounded-md border p-4">
             <div className="flex items-center justify-between">
               <div>
                 <h3 className="text-sm font-semibold">
                   Batch Generation
                 </h3>
                 <p className="text-xs text-muted-foreground">
-                  Generate all certificates at once with real-time progress.
+                  Generate all certificates at once. Safe to re-run after
+                  deleting output files.
                 </p>
               </div>
               <Button
@@ -608,6 +647,11 @@ export default function StepGenerate({
                   <>
                     <Loader2 className="mr-2 h-4 w-4 animate-spin" />
                     Generating…
+                  </>
+                ) : phase === "complete" ? (
+                  <>
+                    <RotateCcw className="mr-2 h-4 w-4" />
+                    Generate Again
                   </>
                 ) : (
                   <>
@@ -643,11 +687,17 @@ export default function StepGenerate({
               </div>
             )}
           </div>
-        )}
 
         {/* ── Results sub-section (after generation) ────────────────────── */}
         {phase === "complete" && (
           <div className="space-y-6">
+            {conversionWarning && (
+              <div className="rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-700 dark:bg-amber-950/40 dark:text-amber-100">
+                PDF conversion was unavailable on this machine. Filled Word
+                (`.docx`) certificates were written instead. Install LibreOffice
+                for PDF output on Windows, macOS, or Linux.
+              </div>
+            )}
             {/* Certificate table */}
             {certificates.length > 0 && (
               <div>

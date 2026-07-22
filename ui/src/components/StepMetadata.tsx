@@ -15,15 +15,19 @@ import {
 export interface MetadataFormData {
   title: string;
   date: string;
+  endDate: string;
+  isMultiDay: boolean;
   instructor: string;
   ceCredits: number;
   ceTypes: {
     apa: boolean;
     nasp: boolean;
-    bcba: boolean;
+    ny: boolean;
   };
   startTime: string;
   endTime: string;
+  isVirtual: boolean;
+  location: string;
 }
 
 interface SavedSession {
@@ -45,11 +49,15 @@ interface StepMetadataProps {
 const EMPTY_FORM: MetadataFormData = {
   title: "",
   date: "",
+  endDate: "",
+  isMultiDay: false,
   instructor: "",
   ceCredits: 0,
-  ceTypes: { apa: false, nasp: false, bcba: false },
+  ceTypes: { apa: false, nasp: false, ny: false },
   startTime: "",
   endTime: "",
+  isVirtual: true,
+  location: "",
 };
 
 function validateFields(data: MetadataFormData): Record<string, string> {
@@ -61,13 +69,20 @@ function validateFields(data: MetadataFormData): Record<string, string> {
   if (!data.date) {
     errors.date = "Date is required.";
   }
+  if (data.isMultiDay) {
+    if (!data.endDate) {
+      errors.endDate = "End date is required for multi-day events.";
+    } else if (data.date && data.endDate < data.date) {
+      errors.endDate = "End date must be on or after the start date.";
+    }
+  }
   if (!data.instructor.trim()) {
     errors.instructor = "Instructor name is required.";
   }
   if (!Number.isFinite(data.ceCredits) || data.ceCredits < 1) {
     errors.ceCredits = "CE credits must be at least 1.";
   }
-  if (!data.ceTypes.apa && !data.ceTypes.nasp && !data.ceTypes.bcba) {
+  if (!data.ceTypes.apa && !data.ceTypes.nasp && !data.ceTypes.ny) {
     errors.ceTypes = "At least one CE type must be selected.";
   }
   if (!data.startTime) {
@@ -79,6 +94,9 @@ function validateFields(data: MetadataFormData): Record<string, string> {
   if (data.startTime && data.endTime && data.startTime >= data.endTime) {
     errors.endTime = "End time must be after start time.";
   }
+  if (!data.isVirtual && !data.location.trim()) {
+    errors.location = "Location is required for in-person events.";
+  }
 
   return errors;
 }
@@ -87,7 +105,7 @@ function ceTypesToString(ceTypes: MetadataFormData["ceTypes"]): string {
   const selected: string[] = [];
   if (ceTypes.apa) selected.push("APA");
   if (ceTypes.nasp) selected.push("NASP");
-  if (ceTypes.bcba) selected.push("BCBA");
+  if (ceTypes.ny) selected.push("NY");
   return selected.join(",");
 }
 
@@ -96,7 +114,7 @@ function parseCeTypes(typesStr: string): MetadataFormData["ceTypes"] {
   return {
     apa: parts.includes("APA"),
     nasp: parts.includes("NASP"),
-    bcba: parts.includes("BCBA"),
+    ny: parts.includes("NY"),
   };
 }
 
@@ -185,11 +203,15 @@ export default function StepMetadata({
     setFormData({
       title: session.title,
       date: session.date,
+      endDate: "",
+      isMultiDay: false,
       instructor: session.instructor,
       ceCredits: session.ce_credits,
       ceTypes: parseCeTypes(session.ce_types),
       startTime: session.start_time,
       endTime: session.end_time,
+      isVirtual: true,
+      location: "",
     });
     setShowSessions(false);
   }, []);
@@ -239,18 +261,50 @@ export default function StepMetadata({
           )}
         </div>
 
-        {/* Date */}
-        <div className="space-y-2">
-          <Label htmlFor="date">Date</Label>
-          <Input
-            id="date"
-            type="date"
-            value={formData.date}
-            onChange={(e) => updateField("date", e.target.value)}
-          />
-          {errors.date && (
-            <p className="text-destructive text-sm">{errors.date}</p>
-          )}
+        {/* Date / multi-day */}
+        <div className="space-y-3">
+          <div className="flex items-center gap-2">
+            <Checkbox
+              id="isMultiDay"
+              checked={formData.isMultiDay}
+              onCheckedChange={(checked) =>
+                updateField("isMultiDay", checked === true)
+              }
+            />
+            <Label htmlFor="isMultiDay" className="cursor-pointer font-normal">
+              Multi-day event
+            </Label>
+          </div>
+          <div className={formData.isMultiDay ? "grid grid-cols-2 gap-4" : ""}>
+            <div className="space-y-2">
+              <Label htmlFor="date">
+                {formData.isMultiDay ? "Start Date" : "Date"}
+              </Label>
+              <Input
+                id="date"
+                type="date"
+                value={formData.date}
+                onChange={(e) => updateField("date", e.target.value)}
+              />
+              {errors.date && (
+                <p className="text-destructive text-sm">{errors.date}</p>
+              )}
+            </div>
+            {formData.isMultiDay && (
+              <div className="space-y-2">
+                <Label htmlFor="endDate">End Date</Label>
+                <Input
+                  id="endDate"
+                  type="date"
+                  value={formData.endDate}
+                  onChange={(e) => updateField("endDate", e.target.value)}
+                />
+                {errors.endDate && (
+                  <p className="text-destructive text-sm">{errors.endDate}</p>
+                )}
+              </div>
+            )}
+          </div>
         </div>
 
         {/* Instructor Name */}
@@ -289,7 +343,11 @@ export default function StepMetadata({
 
         {/* CE Types */}
         <div className="space-y-2">
-          <Label>CE Types</Label>
+          <Label>CE Types Offered</Label>
+          <p className="text-xs text-muted-foreground">
+            Certificate of Attendance is used automatically when a Qualtrics
+            request does not match NY, APA, or NASP.
+          </p>
           <div className="flex flex-wrap gap-6 pt-1">
             <div className="flex items-center gap-2">
               <Checkbox
@@ -313,17 +371,48 @@ export default function StepMetadata({
             </div>
             <div className="flex items-center gap-2">
               <Checkbox
-                id="bcba"
-                checked={formData.ceTypes.bcba}
-                onCheckedChange={(checked) => updateCeType("bcba", checked)}
+                id="ny"
+                checked={formData.ceTypes.ny}
+                onCheckedChange={(checked) => updateCeType("ny", checked)}
               />
-              <Label htmlFor="bcba" className="cursor-pointer font-normal">
-                BCBA
+              <Label htmlFor="ny" className="cursor-pointer font-normal">
+                NY
               </Label>
             </div>
           </div>
           {errors.ceTypes && (
             <p className="text-destructive text-sm">{errors.ceTypes}</p>
+          )}
+        </div>
+
+        {/* Delivery mode */}
+        <div className="space-y-3">
+          <div className="flex items-center gap-2">
+            <Checkbox
+              id="isVirtual"
+              checked={formData.isVirtual}
+              onCheckedChange={(checked) =>
+                updateField("isVirtual", checked === true)
+              }
+            />
+            <Label htmlFor="isVirtual" className="cursor-pointer font-normal">
+              Virtual event
+            </Label>
+          </div>
+          {!formData.isVirtual && (
+            <div className="space-y-2">
+              <Label htmlFor="location">In-person location</Label>
+              <Input
+                id="location"
+                type="text"
+                placeholder="e.g. Rutgers University in Piscataway, NJ"
+                value={formData.location}
+                onChange={(e) => updateField("location", e.target.value)}
+              />
+              {errors.location && (
+                <p className="text-destructive text-sm">{errors.location}</p>
+              )}
+            </div>
           )}
         </div>
 
@@ -355,9 +444,6 @@ export default function StepMetadata({
             )}
           </div>
         </div>
-
-        {/* Error summary for end time comparison (global error not tied to endTime key) */}
-        {/* endTime already covers the comparison error, so no extra element needed */}
 
         {/* Saved Sessions List */}
         {showSessions && sessions.length > 0 && (
