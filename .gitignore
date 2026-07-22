@@ -30,6 +30,10 @@ mcp-debug.log
 
 # OpenCode internal
 .omo/
+src-tauri/.omc/
+
+# Cursor local workspace state
+.cursor/
 
 # Node / Frontend
 node_modules
