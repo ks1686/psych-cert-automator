@@ -1,0 +1,105 @@
+name: Test UI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+jobs:
+  unit:
+    name: Unit (Vitest)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.3"
+
+      - name: Install frontend deps
+        run: bun install --frozen-lockfile
+
+      - name: Unit tests
+        run: bun run test:unit
+
+      - name: Type-check + production build
+        run: bun run build
+
+  e2e-mock:
+    name: E2E (mock API)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.3"
+
+      - name: Install frontend deps
+        run: bun install --frozen-lockfile
+
+      - name: Install Playwright Chromium
+        run: bunx playwright install chromium --with-deps
+
+      - name: Mock e2e
+        run: bun run test:e2e:mock
+
+      - name: Upload mock report
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-mock-report
+          path: |
+            e2e/report/mock
+            test-results/mock
+          if-no-files-found: ignore
+
+  e2e-integration:
+    name: E2E (integration)
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.3"
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Install Python deps
+        run: uv sync
+
+      - name: Install frontend deps
+        run: bun install --frozen-lockfile
+
+      - name: Install Playwright Chromium
+        run: bunx playwright install chromium --with-deps
+
+      - name: Integration e2e
+        run: bun run test:e2e:integration
+
+      - name: Upload integration report
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-integration-report
+          path: |
+            e2e/report/integration
+            test-results/integration
+          if-no-files-found: ignore

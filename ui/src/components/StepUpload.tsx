@@ -12,6 +12,7 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
+import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import {
   Table,
@@ -22,6 +23,9 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { cn } from "@/lib/utils";
+
+/** When Vite is started with `VITE_E2E=1`, show path text inputs for Playwright. */
+const E2E_PATH_INPUTS = import.meta.env.VITE_E2E === "1";
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -305,6 +309,40 @@ export default function StepUpload({
             )}
           </div>
         </div>
+
+        {E2E_PATH_INPUTS && (
+          <div className="space-y-3 rounded-md border border-dashed p-3">
+            <p className="text-xs text-muted-foreground">
+              E2E path inputs (visible only when <code>VITE_E2E=1</code>).
+            </p>
+            <div className="space-y-2">
+              <Label htmlFor="e2e-zoom-path">Zoom report path (E2E)</Label>
+              <Input
+                id="e2e-zoom-path"
+                value={zoomPath}
+                onChange={(e) => {
+                  setZoomPath(e.target.value);
+                  setParseResult(null);
+                  setParseError(null);
+                }}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="e2e-qualtrics-path">
+                Qualtrics survey path (E2E)
+              </Label>
+              <Input
+                id="e2e-qualtrics-path"
+                value={qualtricsPath}
+                onChange={(e) => {
+                  setQualtricsPath(e.target.value);
+                  setParseResult(null);
+                  setParseError(null);
+                }}
+              />
+            </div>
+          </div>
+        )}
 
         {/* ── Parse button ──────────────────────────────────────────────── */}
         <div className="pt-2">
