@@ -41,14 +41,17 @@ VITE_E2E=1 bun run test:e2e:integration
 | FastAPI backend | `http://127.0.0.1:8008` |
 | Tauri WebDriver (manual) | `http://127.0.0.1:4444` |
 
-When `VITE_E2E=1`, Step 2 shows path text inputs so browser tests can set
-Zoom/Qualtrics paths without Tauri file dialogs.
+When `VITE_E2E=1`, Vite aliases `@tauri-apps/plugin-dialog` to
+`ui/src/test/e2e-dialog-stub.ts`. Tests seed `window.__E2E_PATHS__` and click
+the real Select Zoom / Select Qualtrics buttons — no product test UI.
+
+Shared Playwright policy lives in `e2e/playwright.base.ts`.
 
 ## Writing New Tests
 
 - Prefer `page.getByRole()` for buttons, inputs, and headings.
 - Use `page.locator('#id')` for elements with DOM IDs (form fields).
-- Use shared helpers in `e2e/helpers/wizard.ts`.
+- Use shared helpers in `e2e/helpers/wizard.ts` (`fillStep1Valid`, `parseWithE2ePaths`, `advanceToGenerateStep`).
 - Avoid `page.waitForTimeout()` — use `expect().toBeVisible()`.
 - Run headed: `bun run test:e2e:mock -- --headed`
 
