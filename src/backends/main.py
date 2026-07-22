@@ -56,6 +56,7 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=[
         "http://localhost:1420",
+        "http://127.0.0.1:1420",
         "tauri://localhost",
         "http://tauri.localhost",
         "https://tauri.localhost",

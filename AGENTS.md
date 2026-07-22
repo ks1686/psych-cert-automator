@@ -24,6 +24,9 @@ bun install          # install frontend dependencies
 bun run build        # TypeScript type-check + Vite production build
 bun run tauri dev    # start Tauri dev server (hot reload)
 bun run tauri build  # build Tauri installer for current platform
+bun run test:unit    # Vitest + Testing Library (wizard components)
+bun run test:e2e:mock          # Playwright mock e2e (stubbed API)
+bun run test:e2e:integration   # Playwright + real FastAPI + fixtures
 
 uv sync              # install Python dependencies
 uv run pytest        # run Python tests (23)
@@ -47,6 +50,7 @@ Tauri v2 (Rust) → React frontend (ui/src/) → HTTP localhost:8008 → FastAPI
 - `certgen.py` — original CLI entry point (still works)
 - `ui/src/App.tsx` — 4-step wizard state machine
 - `.github/workflows/build.yml` — CI/CD for macOS/Windows/Linux
+- `.github/workflows/test-ui.yml` — Vitest + Playwright (mock + integration) on Ubuntu
 
 ## Rules
 

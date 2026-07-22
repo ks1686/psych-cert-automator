@@ -1,0 +1,19 @@
+[
+  {
+    "id": 0,
+    "title": "Cognitive Behavioral Therapy Workshop",
+    "date": "2026-09-10",
+    "end_date": "2026-09-11",
+    "is_multi_day": true,
+    "instructor": "Dr. Robert Chen",
+    "ce_credits": 4,
+    "ce_types": "APA,NY",
+    "start_time": "09:30",
+    "end_time": "13:30",
+    "is_virtual": false,
+    "location": "Rutgers University in Piscataway, NJ",
+    "name": "cognitive_behavioral_therapy_workshop",
+    "saved_at": "2026-07-21T12:00:00",
+    "path": "/tmp/cognitive_behavioral_therapy_workshop.json"
+  }
+]
