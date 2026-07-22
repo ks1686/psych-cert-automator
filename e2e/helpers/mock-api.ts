@@ -4,6 +4,8 @@ import { fileURLToPath } from "node:url";
 
 import type { Page, Route } from "@playwright/test";
 
+const API_ORIGIN = "http://127.0.0.1:8008";
+
 const FIXTURES_DIR = path.join(
   path.dirname(fileURLToPath(import.meta.url)),
   "..",
@@ -26,16 +28,120 @@ const PREVIEW_PDF = Buffer.from(
   "utf8",
 );
 
-let generateCallCount = 0;
+type RouteKey = `${string} ${string}`;
+
+interface MockApiState {
+  generateCallCount: number;
+}
+
+function buildFulfillers(state: MockApiState): Map<
+  RouteKey,
+  (route: Route) => Promise<void>
+> {
+  return new Map([
+    [
+      "GET /api/sessions",
+      async (route) => {
+        await route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: sessionsJson,
+        });
+      },
+    ],
+    [
+      "POST /api/sessions",
+      async (route) => {
+        await route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify({
+            status: "saved",
+            path: "/tmp/mock-session.json",
+          }),
+        });
+      },
+    ],
+    [
+      "POST /api/parse",
+      async (route) => {
+        await route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: parseJson,
+        });
+      },
+    ],
+    [
+      "POST /api/match",
+      async (route) => {
+        await route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: matchJson,
+        });
+      },
+    ],
+    [
+      "POST /api/preview",
+      async (route) => {
+        await route.fulfill({
+          status: 200,
+          contentType: "application/pdf",
+          body: PREVIEW_PDF,
+        });
+      },
+    ],
+    [
+      "POST /api/generate",
+      async (route) => {
+        state.generateCallCount += 1;
+        await route.fulfill({
+          status: 200,
+          contentType: "text/event-stream",
+          body: generateSse,
+        });
+      },
+    ],
+    [
+      "POST /api/download-zip",
+      async (route) => {
+        await route.fulfill({
+          status: 200,
+          contentType: "application/zip",
+          body: Buffer.from("PK\u0003\u0004"),
+          headers: {
+            "Content-Disposition": "attachment; filename=certificates.zip",
+          },
+        });
+      },
+    ],
+    [
+      "GET /api/pdf",
+      async (route) => {
+        await route.fulfill({
+          status: 200,
+          contentType: "application/pdf",
+          body: PREVIEW_PDF,
+        });
+      },
+    ],
+  ]);
+}
+
+export interface MockApiHandle {
+  getGenerateCallCount(): number;
+}
 
 /**
  * Route backend health + `/api/**` calls to local fixtures so mock e2e
  * can run without FastAPI.
  */
-export async function installMockApi(page: Page): Promise<void> {
-  generateCallCount = 0;
+export async function installMockApi(page: Page): Promise<MockApiHandle> {
+  const state: MockApiState = { generateCallCount: 0 };
+  const fulfillers = buildFulfillers(state);
 
-  await page.route("http://127.0.0.1:8008/health", async (route) => {
+  await page.route(`${API_ORIGIN}/health`, async (route) => {
     await route.fulfill({
       status: 200,
       contentType: "application/json",
@@ -43,99 +149,24 @@ export async function installMockApi(page: Page): Promise<void> {
     });
   });
 
-  await page.route("http://127.0.0.1:8008/api/**", async (route) => {
-    await fulfillApiRoute(route);
+  await page.route(`${API_ORIGIN}/api/**`, async (route) => {
+    const url = new URL(route.request().url());
+    const key = `${route.request().method()} ${url.pathname}` as RouteKey;
+    const fulfill = fulfillers.get(key);
+    if (fulfill) {
+      await fulfill(route);
+      return;
+    }
+    await route.fulfill({
+      status: 404,
+      contentType: "application/json",
+      body: JSON.stringify({
+        detail: `Unhandled mock route: ${route.request().method()} ${url.pathname}`,
+      }),
+    });
   });
-}
 
-async function fulfillApiRoute(route: Route): Promise<void> {
-  const url = new URL(route.request().url());
-  const method = route.request().method();
-  const pathname = url.pathname;
-
-  if (pathname === "/api/sessions" && method === "GET") {
-    await route.fulfill({
-      status: 200,
-      contentType: "application/json",
-      body: sessionsJson,
-    });
-    return;
-  }
-
-  if (pathname === "/api/sessions" && method === "POST") {
-    await route.fulfill({
-      status: 200,
-      contentType: "application/json",
-      body: JSON.stringify({ status: "saved", path: "/tmp/mock-session.json" }),
-    });
-    return;
-  }
-
-  if (pathname === "/api/parse" && method === "POST") {
-    await route.fulfill({
-      status: 200,
-      contentType: "application/json",
-      body: parseJson,
-    });
-    return;
-  }
-
-  if (pathname === "/api/match" && method === "POST") {
-    await route.fulfill({
-      status: 200,
-      contentType: "application/json",
-      body: matchJson,
-    });
-    return;
-  }
-
-  if (pathname === "/api/preview" && method === "POST") {
-    await route.fulfill({
-      status: 200,
-      contentType: "application/pdf",
-      body: PREVIEW_PDF,
-    });
-    return;
-  }
-
-  if (pathname === "/api/generate" && method === "POST") {
-    generateCallCount += 1;
-    await route.fulfill({
-      status: 200,
-      contentType: "text/event-stream",
-      body: generateSse,
-    });
-    return;
-  }
-
-  if (pathname === "/api/download-zip" && method === "POST") {
-    await route.fulfill({
-      status: 200,
-      contentType: "application/zip",
-      body: Buffer.from("PK\u0003\u0004"),
-      headers: {
-        "Content-Disposition": "attachment; filename=certificates.zip",
-      },
-    });
-    return;
-  }
-
-  if (pathname === "/api/pdf" && method === "GET") {
-    await route.fulfill({
-      status: 200,
-      contentType: "application/pdf",
-      body: PREVIEW_PDF,
-    });
-    return;
-  }
-
-  await route.fulfill({
-    status: 404,
-    contentType: "application/json",
-    body: JSON.stringify({ detail: `Unhandled mock route: ${method} ${pathname}` }),
-  });
-}
-
-export function getMockGenerateCallCount(): number {
-  return generateCallCount;
+  return {
+    getGenerateCallCount: () => state.generateCallCount,
+  };
 }

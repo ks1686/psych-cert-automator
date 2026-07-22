@@ -3,11 +3,7 @@ import { fileURLToPath } from "node:url";
 
 import { test, expect } from "@playwright/test";
 
-import {
-  fillStep1Valid,
-  parseWithE2ePaths,
-  waitForWizard,
-} from "../helpers/wizard";
+import { advanceToGenerateStep, waitForWizard } from "../helpers/wizard";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const ZOOM_FIXTURE = path.join(ROOT, "tests/fixtures/sample_zoom.xlsx");
@@ -23,30 +19,16 @@ test.describe("Integration e2e — real FastAPI pipeline", () => {
     await page.goto("/");
     await waitForWizard(page);
 
-    await fillStep1Valid(page);
-    // Align Step 1 date with Zoom fixture session (2026-03-20).
-    await page.locator("#date").fill("2026-03-20");
-    await page.locator("#startTime").fill("08:47");
-    await page.locator("#endTime").fill("12:11");
-    await page.locator("#nasp").check();
-
-    await page.getByRole("button", { name: "Next" }).click();
-    await expect(
-      page.getByRole("heading", { name: /Step 2: Upload Files/i }),
-    ).toBeVisible();
-
-    await parseWithE2ePaths(page, ZOOM_FIXTURE, QUALTRICS_FIXTURE);
-    await page.getByRole("button", { name: "Next" }).click();
-
-    await expect(
-      page.getByRole("heading", { name: /Review Name Matches/i }),
-    ).toBeVisible({ timeout: 60_000 });
-    await expect(page.getByText("Hannah Lee").first()).toBeVisible();
-
-    await page.getByRole("button", { name: "Next" }).click();
-    await expect(
-      page.getByRole("heading", { name: /Generate Certificates/i }),
-    ).toBeVisible();
+    await advanceToGenerateStep(
+      page,
+      { zoom: ZOOM_FIXTURE, qualtrics: QUALTRICS_FIXTURE },
+      {
+        date: "2026-03-20",
+        startTime: "08:47",
+        endTime: "12:11",
+        nasp: true,
+      },
+    );
 
     const generateBtn = page.getByRole("button", {
       name: /Generate All Certificates|Generate Again/i,
@@ -57,6 +39,8 @@ test.describe("Integration e2e — real FastAPI pipeline", () => {
     await expect(page.getByText(/Generated Certificates/i)).toBeVisible({
       timeout: 90_000,
     });
-    await expect(page.getByRole("table").getByText("Hannah Lee").first()).toBeVisible();
+    await expect(
+      page.getByRole("table").getByText("Hannah Lee").first(),
+    ).toBeVisible();
   });
 });
