@@ -13,16 +13,12 @@ from __future__ import annotations
 
 import asyncio
 import io
-import json
 import secrets
 import tempfile
 import zipfile
 from datetime import date, datetime, time, timezone
 from pathlib import Path
-from typing import TYPE_CHECKING, assert_never
-
-if TYPE_CHECKING:
-    from collections.abc import AsyncGenerator
+from typing import Literal, assert_never
 
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse, StreamingResponse
@@ -119,12 +115,14 @@ class MatchRequest(BaseModel):
     overrides: dict[str, str] | None = None
     session_start: datetime | None = None
     session_end: datetime | None = None
+    # When set, attendance uses full Zoom segments (same as generate).
+    zoom_path: str | None = None
 
 
 class MatchEntry(BaseModel):
     """One match outcome serialised for the API response."""
 
-    kind: str  # "success" | "ambiguous" | "not_found"
+    kind: Literal["success", "ambiguous", "not_found"]
     qualtrics_name: str
     zoom_name: str | None = None
     confidence: float | None = None
@@ -226,8 +224,10 @@ def _result_status(status: str) -> str:
             return "Attendance"
         case "name_match_ambiguous":
             return "Ambiguous"
+        case "excluded":
+            return "Excluded"
         case "eligible":
-            return "Attendance"
+            return "Eligible"
         case _:
             return "Attendance"
 
@@ -323,18 +323,38 @@ async def match_endpoint(request: MatchRequest) -> MatchResponse:
     Runs the four-strategy name-matching pipeline (manual override →
     exact normalized → token-set subset → first-name partial) and returns
     a match entry per Qualtrics name with a kind discriminator.
+
+    When ``zoom_path`` is provided, attendance validation uses the full
+    multi-segment Zoom parse (same fidelity as ``/api/generate``).
     """
-    if not request.zoom_participants:
-        raise HTTPException(status_code=400, detail="zoom_participants must not be empty")
     if not request.ce_requests:
         raise HTTPException(status_code=400, detail="ce_requests must not be empty")
 
-    participants = [_participant_from_brief(p) for p in request.zoom_participants]
+    if request.zoom_path:
+        try:
+            zoom_session = await asyncio.to_thread(
+                parse_zoom_attendance, request.zoom_path,
+            )
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except ZoomParseError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        participants = list(zoom_session.participants)
+        session_start = request.session_start or zoom_session.session_start
+        session_end = request.session_end or zoom_session.session_end
+    else:
+        if not request.zoom_participants:
+            raise HTTPException(
+                status_code=400,
+                detail="zoom_participants must not be empty when zoom_path is omitted",
+            )
+        participants = [_participant_from_brief(p) for p in request.zoom_participants]
+        session_start = request.session_start or min(p.first_join for p in participants)
+        session_end = request.session_end or max(p.last_leave for p in participants)
+
     zoom_names = [p.name_raw for p in participants]
     zoom_lookup = {p.name_raw: p for p in participants}
     qualtrics_names = [r.name_on_certificate for r in request.ce_requests]
-    session_start = request.session_start or min(p.first_join for p in participants)
-    session_end = request.session_end or max(p.last_leave for p in participants)
 
     result = await asyncio.to_thread(
         match_participants, zoom_names, qualtrics_names, request.overrides,
@@ -435,83 +455,98 @@ def _build_preview_certificate(
 
 
 @router.post("/generate")
-async def generate_endpoint(request: GenerateRequest) -> StreamingResponse:
-    """Run the full CE certificate generation pipeline with SSE progress.
+async def generate_endpoint(request: GenerateRequest) -> dict[str, object]:
+    """Run the full CE certificate generation pipeline.
 
-    Streams Server-Sent Events: a ``started`` event when the pipeline
-    begins, then a ``complete`` event carrying counts and summary data
-    once ``run_pipeline`` finishes.  All synchronous I/O (Excel parsing,
-    PDF generation) runs off the event loop.
+    Returns a JSON payload with certificates and ineligibility entries.
+    Pipeline failures surface as HTTP 400 with ``detail`` set to the error
+    messages (previous SSE ``complete``-with-empty-lists behaviour removed).
     """
+    _validate_output_dir(request.output_dir)
 
-    async def event_stream() -> AsyncGenerator[str, None]:
-        yield "data: " + json.dumps(
-            {
-                "type": "progress",
-                "current": 0,
-                "total": 0,
-                "success_count": 0,
-                "failure_count": 0,
-            }
-        ) + "\n\n"
+    result: PipelineResult = await asyncio.to_thread(
+        run_pipeline,
+        request.zoom_path,
+        request.qualtrics_path,
+        request.title,
+        request.training_date,
+        request.instructor,
+        request.ce_credits,
+        request.ce_types,
+        request.start_time,
+        request.end_time,
+        overrides=request.overrides,
+        overrides_path=request.overrides_path,
+        output_dir=request.output_dir,
+        excluded_names=set(request.excluded_names or []),
+        is_virtual=request.is_virtual,
+        location=request.location,
+        end_date=request.end_date,
+    )
 
-        result: PipelineResult = await asyncio.to_thread(
-            run_pipeline,
-            request.zoom_path,
-            request.qualtrics_path,
-            request.title,
-            request.training_date,
-            request.instructor,
-            request.ce_credits,
-            request.ce_types,
-            request.start_time,
-            request.end_time,
-            overrides=request.overrides,
-            overrides_path=request.overrides_path,
-            output_dir=request.output_dir,
-            excluded_names=set(request.excluded_names or []),
-            is_virtual=request.is_virtual,
-            location=request.location,
-            end_date=request.end_date,
+    if result.errors:
+        raise HTTPException(
+            status_code=400,
+            detail="; ".join(result.errors),
         )
 
-        _clear_generated_registry()
-        certificates = []
-        for cert, generated_path in zip(
-            result.eligible,
-            result.generated_paths,
-            strict=False,
-        ):
-            file_path = Path(generated_path)
-            if not file_path.is_file():
-                continue
-            certificates.append(
-                {
-                    "name": cert.full_name,
-                    "ce_type": str(cert.ce_type),
-                    "filename": file_path.name,
-                    "path": _register_generated_file(file_path),
-                }
-            )
-        ineligible_entries = [
-            {
-                "name": entry.name_qualtrics,
-                "status": _result_status(str(entry.status)),
-                "reason": entry.reason,
-            }
-            for entry in result.ineligible
-        ]
-        payload: dict[str, object] = {
-            "type": "complete",
-            "certificates": certificates,
-            "ineligible": ineligible_entries,
-            "conversion_warning": any(
-                Path(p).suffix.lower() == ".docx" for p in result.generated_paths
+    _clear_generated_registry()
+    if len(result.eligible) != len(result.generated_paths):
+        raise HTTPException(
+            status_code=500,
+            detail=(
+                f"Certificate path count mismatch: "
+                f"{len(result.eligible)} eligible vs "
+                f"{len(result.generated_paths)} paths"
             ),
-        }
-        yield "data: " + json.dumps(payload, default=str) + "\n\n"
+        )
 
-    return StreamingResponse(event_stream(), media_type="text/event-stream")
+    certificates: list[dict[str, object]] = []
+    for cert, generated_path in zip(
+        result.eligible,
+        result.generated_paths,
+        strict=True,
+    ):
+        file_path = Path(generated_path)
+        if not file_path.is_file():
+            raise HTTPException(
+                status_code=500,
+                detail=f"Generated certificate missing: {file_path.name}",
+            )
+        certificates.append(
+            {
+                "name": cert.full_name,
+                "ce_type": str(cert.ce_type),
+                "filename": file_path.name,
+                "path": _register_generated_file(file_path),
+            }
+        )
+    ineligible_entries = [
+        {
+            "name": entry.name_qualtrics,
+            "status": _result_status(str(entry.status)),
+            "reason": entry.reason,
+        }
+        for entry in result.ineligible
+    ]
+    return {
+        "certificates": certificates,
+        "ineligible": ineligible_entries,
+        "conversion_warning": any(
+            Path(p).suffix.lower() == ".docx" for p in result.generated_paths
+        ),
+    }
+
+
+def _validate_output_dir(output_dir: str) -> None:
+    """Reject path values that could break AppleScript / shell interpolation."""
+    if not output_dir or not output_dir.strip():
+        raise HTTPException(status_code=400, detail="output_dir is required")
+    if any(ch in output_dir for ch in ('"', "\n", "\r", "\x00")):
+        raise HTTPException(
+            status_code=400,
+            detail="output_dir contains disallowed characters",
+        )
 
 
 @router.post("/download-zip")

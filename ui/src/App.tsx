@@ -1,10 +1,7 @@
 import {
-  createContext,
-  useContext,
   useState,
   useCallback,
   useEffect,
-  useMemo,
   type ReactNode,
   Component,
 } from "react";
@@ -12,6 +9,7 @@ import { listen } from "@tauri-apps/api/event";
 import { Loader2, AlertCircle } from "lucide-react";
 import { Toaster, toast } from "sonner";
 
+import { API_BASE } from "@/api/client";
 import { Button } from "@/components/ui/button";
 import StepMetadata from "@/components/StepMetadata";
 import type { MetadataFormData } from "@/components/StepMetadata";
@@ -41,40 +39,7 @@ export interface WizardState {
   trainingMetadata: TrainingMetadata | null;
 }
 
-export interface WizardContextValue {
-  /** Current wizard step (1–4) */
-  step: WizardStep;
-  /** All accumulated wizard data — null until its step has been completed */
-  state: WizardState;
-}
-
 type TransitionPhase = "idle" | "matching";
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Context
-// ─────────────────────────────────────────────────────────────────────────────
-
-const WizardContext = createContext<WizardContextValue | null>(null);
-
-/**
- * Hook to access the wizard state from any descendant component.
- * Must be called inside the <WizardContext.Provider> rendered by App.
- */
-export function useWizard(): WizardContextValue {
-  const ctx = useContext(WizardContext);
-  if (!ctx) {
-    throw new Error("useWizard must be used within a WizardProvider");
-  }
-  return ctx;
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Helpers
-// ─────────────────────────────────────────────────────────────────────────────
-
-// Use 127.0.0.1 (not "localhost"): on Windows "localhost" can resolve to ::1
-// (IPv6) first, but the backend binds 127.0.0.1 (IPv4) only.
-const API_BASE = "http://127.0.0.1:8008";
 
 /** Derive TrainingMetadata from Step 1 + Step 2 data. */
 function deriveTrainingMetadata(
@@ -306,6 +271,7 @@ function WizardApp() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          zoom_path: data.zoomPath,
           zoom_participants: participants,
           ce_requests: requests,
           session_start: data.sessionStart,
@@ -329,6 +295,7 @@ function WizardApp() {
         sessionStart: data.sessionStart,
         sessionEnd: data.sessionEnd,
         zoomHost: data.zoomHost,
+        zoomPath: data.zoomPath,
       };
 
       setWizardState((prev) => ({ ...prev, matchData }));
@@ -375,13 +342,6 @@ function WizardApp() {
     setStep(1);
     setMatchError(null);
   }, []);
-
-  // ── Context value (memoised to avoid re-renders) ────────────────────────
-
-  const contextValue = useMemo<WizardContextValue>(
-    () => ({ step, state: wizardState }),
-    [step, wizardState],
-  );
 
   // ── Startup screen (before sidecar signals ready) ───────────────────────
 
@@ -435,7 +395,6 @@ function WizardApp() {
   // ── Wizard rendering ────────────────────────────────────────────────────
 
   return (
-    <WizardContext.Provider value={contextValue}>
       <main className="min-h-screen bg-background px-4 py-8">
         <div className="mx-auto max-w-5xl">
           <StepIndicator currentStep={step} />
@@ -477,7 +436,6 @@ function WizardApp() {
           )}
         </div>
       </main>
-    </WizardContext.Provider>
   );
 }
 

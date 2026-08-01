@@ -1,0 +1,18 @@
+{
+  "certificates": [
+    {
+      "name": "Alex Rivera",
+      "ce_type": "APA",
+      "filename": "Rivera_CECertificate_Smith_2026-03-20.docx",
+      "path": "mock-token-rivera"
+    },
+    {
+      "name": "Sam Patel",
+      "ce_type": "NASP",
+      "filename": "Patel_CECertificate_Smith_2026-03-20.docx",
+      "path": "mock-token-patel"
+    }
+  ],
+  "ineligible": [],
+  "conversion_warning": true
+}

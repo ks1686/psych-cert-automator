@@ -47,6 +47,7 @@ const matchData: MatchData = {
   sessionStart: "2026-07-21T09:00:00",
   sessionEnd: "2026-07-21T12:00:00",
   zoomHost: null,
+  zoomPath: "/tmp/zoom.xlsx",
 };
 
 const trainingMetadata = {
@@ -89,10 +90,6 @@ const uploadData: UploadData = {
   zoomHost: null,
 };
 
-function sseBody(events: unknown[]): string {
-  return events.map((event) => `data: ${JSON.stringify(event)}\n\n`).join("");
-}
-
 afterEach(() => {
   vi.unstubAllGlobals();
 });
@@ -101,31 +98,21 @@ test("shows Generate Again after a successful generation", async () => {
   const user = userEvent.setup();
   const fetchMock = vi.fn().mockResolvedValue(
     new Response(
-      sseBody([
-        {
-          type: "progress",
-          current: 1,
-          total: 1,
-          success_count: 1,
-          failure_count: 0,
-        },
-        {
-          type: "complete",
-          certificates: [
-            {
-              name: "Alex Rivera",
-              ce_type: "APA",
-              filename: "Rivera_CECertificate_Smith_2026-07-21.docx",
-              path: "/tmp/Rivera_CECertificate_Smith_2026-07-21.docx",
-            },
-          ],
-          ineligible: [],
-          conversion_warning: true,
-        },
-      ]),
+      JSON.stringify({
+        certificates: [
+          {
+            name: "Alex Rivera",
+            ce_type: "APA",
+            filename: "Rivera_CECertificate_Smith_2026-07-21.docx",
+            path: "mock-token",
+          },
+        ],
+        ineligible: [],
+        conversion_warning: true,
+      }),
       {
         status: 200,
-        headers: { "Content-Type": "text/event-stream" },
+        headers: { "Content-Type": "application/json" },
       },
     ),
   );
@@ -150,4 +137,36 @@ test("shows Generate Again after a successful generation", async () => {
       screen.getByRole("button", { name: /Generate Again/i }),
     ).toBeEnabled();
   });
+});
+
+test("surfaces generation HTTP errors instead of empty success", async () => {
+  const user = userEvent.setup();
+  const fetchMock = vi.fn().mockResolvedValue(
+    new Response(JSON.stringify({ detail: "Zoom file not found" }), {
+      status: 400,
+      headers: { "Content-Type": "application/json" },
+    }),
+  );
+  vi.stubGlobal("fetch", fetchMock);
+
+  render(
+    <StepGenerate
+      onBack={vi.fn()}
+      onReset={vi.fn()}
+      matchData={matchData}
+      trainingMetadata={trainingMetadata}
+      uploadData={uploadData}
+    />,
+  );
+
+  await user.click(
+    screen.getByRole("button", { name: /Generate All Certificates/i }),
+  );
+
+  await waitFor(() => {
+    expect(screen.getByText(/Generation failed \(400\)/i)).toBeInTheDocument();
+  });
+  expect(
+    screen.getByRole("button", { name: /Generate All Certificates/i }),
+  ).toBeEnabled();
 });

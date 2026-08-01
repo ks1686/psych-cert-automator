@@ -1,4 +1,5 @@
 import { useState, useMemo, useCallback } from "react";
+import { API_BASE } from "@/api/client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -162,7 +163,7 @@ export default function StepMetadata({
   const handleSave = useCallback(async () => {
     setSaveStatus("saving");
     try {
-      const response = await fetch("http://127.0.0.1:8008/api/sessions", {
+      const response = await fetch(`${API_BASE}/api/sessions`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -194,7 +195,7 @@ export default function StepMetadata({
   const handleLoad = useCallback(async () => {
     setLoadError(null);
     try {
-      const response = await fetch("http://127.0.0.1:8008/api/sessions");
+      const response = await fetch(`${API_BASE}/api/sessions`);
       if (!response.ok) {
         throw new Error(`Server responded with ${response.status}`);
       }

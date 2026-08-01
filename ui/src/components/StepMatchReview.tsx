@@ -1,6 +1,7 @@
 import { useState, useCallback, useMemo } from "react";
 import { CheckCircle, AlertTriangle, XCircle, Loader2 } from "lucide-react";
 
+import { API_BASE } from "@/api/client";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -73,6 +74,8 @@ export interface MatchData {
   sessionStart: string;
   sessionEnd: string;
   zoomHost: string | null;
+  /** Absolute path to the Zoom workbook — used for full-segment attendance. */
+  zoomPath: string;
 }
 
 // ── Props ───────────────────────────────────────────────────────────────────
@@ -82,10 +85,6 @@ interface StepMatchReviewProps {
   onBack: () => void;
   initialData: MatchData;
 }
-
-// ── Constants ───────────────────────────────────────────────────────────────
-
-const API_BASE = "http://127.0.0.1:8008";
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -204,6 +203,7 @@ export default function StepMatchReview({
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          zoom_path: initialData.zoomPath,
           zoom_participants: initialData.zoomParticipants,
           ce_requests: initialData.ceRequests,
           session_start: initialData.sessionStart,
@@ -220,24 +220,27 @@ export default function StepMatchReview({
 
       const data: { matches: MatchEntryWire[] } = await response.json();
       setMatches(data.matches);
+      return data.matches;
     } catch (err) {
       setError(
         err instanceof Error ? err.message : "Failed to apply corrections",
       );
+      return null;
     } finally {
       setIsApplying(false);
     }
   }, [
     overrides,
+    initialData.zoomPath,
     initialData.zoomParticipants,
     initialData.ceRequests,
     initialData.sessionStart,
     initialData.sessionEnd,
   ]);
 
-  const handleAutoMatch = useCallback(() => {
-    onNext({
-      matches,
+  const buildMatchPayload = useCallback(
+    (nextMatches: MatchEntryWire[]): MatchData => ({
+      matches: nextMatches,
       overrides,
       excludedNames: Object.keys(excluded).filter((name) => excluded[name]),
       zoomParticipants: initialData.zoomParticipants,
@@ -245,21 +248,27 @@ export default function StepMatchReview({
       sessionStart: initialData.sessionStart,
       sessionEnd: initialData.sessionEnd,
       zoomHost: initialData.zoomHost,
-    });
-  }, [matches, overrides, excluded, initialData, onNext]);
+      zoomPath: initialData.zoomPath,
+    }),
+    [overrides, excluded, initialData],
+  );
 
-  const handleNext = useCallback(() => {
-    onNext({
-      matches,
-      overrides,
-      excludedNames: Object.keys(excluded).filter((name) => excluded[name]),
-      zoomParticipants: initialData.zoomParticipants,
-      ceRequests: initialData.ceRequests,
-      sessionStart: initialData.sessionStart,
-      sessionEnd: initialData.sessionEnd,
-      zoomHost: initialData.zoomHost,
-    });
-  }, [matches, overrides, excluded, initialData, onNext]);
+  const handleNext = useCallback(async () => {
+    const overrideCount = Object.keys(overrides).length;
+    if (overrideCount > 0) {
+      const refreshed = await handleApplyCorrections();
+      if (refreshed === null) return;
+      onNext(buildMatchPayload(refreshed));
+      return;
+    }
+    onNext(buildMatchPayload(matches));
+  }, [
+    overrides,
+    handleApplyCorrections,
+    buildMatchPayload,
+    matches,
+    onNext,
+  ]);
 
   const toggleExcluded = useCallback((qualtricsName: string, checked: boolean) => {
     setExcluded((prev) => ({ ...prev, [qualtricsName]: checked }));
@@ -578,7 +587,9 @@ export default function StepMatchReview({
           <div className="flex items-center gap-2">
             <Button
               variant="secondary"
-              onClick={handleApplyCorrections}
+              onClick={() => {
+                void handleApplyCorrections();
+              }}
               disabled={isApplying || overrideCount === 0}
             >
               {isApplying ? (
@@ -591,11 +602,14 @@ export default function StepMatchReview({
               )}
             </Button>
 
-            <Button variant="outline" onClick={handleAutoMatch}>
-              Auto-match All
+            <Button
+              onClick={() => {
+                void handleNext();
+              }}
+              disabled={isApplying}
+            >
+              Next
             </Button>
-
-            <Button onClick={handleNext}>Next</Button>
           </div>
         </CardFooter>
       </Card>

@@ -47,6 +47,7 @@ const initialData: MatchData = {
   sessionStart: "2026-07-21T09:00:00",
   sessionEnd: "2026-07-21T12:00:00",
   zoomHost: "Jessica Benas",
+  zoomPath: "/tmp/zoom.xlsx",
 };
 
 test("pre-excludes the Zoom host and allows including them", async () => {
