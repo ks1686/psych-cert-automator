@@ -5,10 +5,8 @@ import {
   Eye,
   CheckCircle,
   XCircle,
-  AlertTriangle,
   RotateCcw,
   FileDown,
-  ArrowUpDown,
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -30,8 +28,15 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { PdfPreview } from "@/components/PdfPreview";
+import {
+  IneligibilityReport,
+  type IneligibleResult,
+} from "@/components/generate/IneligibilityReport";
+import { API_BASE, pdfViewUrl } from "@/api/client";
 import type { MatchData } from "@/components/StepMatchReview";
 import type { UploadData } from "@/components/StepUpload";
+
+export type { IneligibleResult, IneligibleStatus } from "@/components/generate/IneligibilityReport";
 
 // ── Wire types ──────────────────────────────────────────────────────────────
 
@@ -54,38 +59,6 @@ export interface CertificateResult {
   filename: string;
   path: string;
 }
-
-export interface IneligibleResult {
-  name: string;
-  status: IneligibleStatus;
-  reason: string;
-}
-
-export type IneligibleStatus = "Not Found" | "Attendance" | "Ambiguous";
-
-// ── SSE event types ─────────────────────────────────────────────────────────
-
-interface SSEProgressEvent {
-  type: "progress";
-  current: number;
-  total: number;
-  success_count: number;
-  failure_count: number;
-}
-
-interface SSECompleteEvent {
-  type: "complete";
-  certificates: CertificateResult[];
-  ineligible: IneligibleResult[];
-  conversion_warning?: boolean;
-}
-
-interface SSEErrorEvent {
-  type: "error";
-  message: string;
-}
-
-type SSEEvent = SSEProgressEvent | SSECompleteEvent | SSEErrorEvent;
 
 // ── Component state enum ────────────────────────────────────────────────────
 
@@ -115,10 +88,6 @@ interface StepGenerateProps {
   trainingMetadata: TrainingMetadata;
   uploadData: UploadData;
 }
-
-// ── Constants ───────────────────────────────────────────────────────────────
-
-const API_BASE = "http://127.0.0.1:8008";
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -156,8 +125,17 @@ function deriveIneligibleEntries(
   matchData: MatchData,
 ): IneligibleResult[] {
   const results: IneligibleResult[] = [];
+  const excluded = new Set(matchData.excludedNames);
 
   for (const match of matchData.matches) {
+    if (excluded.has(match.qualtrics_name)) {
+      results.push({
+        name: match.qualtrics_name,
+        status: "Excluded",
+        reason: "Excluded from certificate generation",
+      });
+      continue;
+    }
     if (match.kind === "not_found") {
       results.push({
         name: match.qualtrics_name,
@@ -235,14 +213,6 @@ export default function StepGenerate({
   const [conversionWarning, setConversionWarning] = useState(false);
   const [previewIsPdf, setPreviewIsPdf] = useState(true);
 
-  // ── Ineligibility table filter & sort ────────────────────────────────────
-
-  const [eligFilter, setEligFilter] = useState<IneligibleStatus | "All">("All");
-  const [eligSortKey, setEligSortKey] = useState<
-    "name" | "status" | "reason"
-  >("name");
-  const [eligSortDir, setEligSortDir] = useState<"asc" | "desc">("asc");
-
   // ── Preview handler ──────────────────────────────────────────────────────
 
   const handlePreview = useCallback(async () => {
@@ -292,19 +262,20 @@ export default function StepGenerate({
     }
   }, [eligibleEntries, trainingMetadata]);
 
-  // ── SSE generation handler ───────────────────────────────────────────────
+  // ── Generation handler ───────────────────────────────────────────────────
 
   const handleGenerate = useCallback(async () => {
     if (eligibleEntries.length === 0) return;
 
     setPhase("generating");
     setGenError(null);
-    setProgressPercent(0);
-    setProgressLabel("Starting…");
+    setProgressPercent(10);
+    setProgressLabel("Generating certificates…");
     setSuccessCount(0);
     setFailureCount(0);
     setCertificates([]);
     setIneligible([]);
+    setConversionWarning(false);
 
     try {
       const response = await fetch(`${API_BASE}/api/generate`, {
@@ -340,117 +311,38 @@ export default function StepGenerate({
         throw new Error(`Generation failed (${response.status}): ${text}`);
       }
 
-      const reader = response.body?.getReader();
-      if (!reader) {
-        throw new Error("No response body stream available");
-      }
+      const payload: {
+        certificates: CertificateResult[];
+        ineligible: IneligibleResult[];
+        conversion_warning?: boolean;
+      } = await response.json();
 
-      const decoder = new TextDecoder();
-      let buffer = "";
-
-      // eslint-disable-next-line no-constant-condition
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-
-        buffer += decoder.decode(value, { stream: true });
-
-        // Split on double-newline (SSE event delimiter)
-        const parts = buffer.split("\n\n");
-        // Last part may be incomplete — keep it for next chunk
-        buffer = parts.pop() ?? "";
-
-        for (const part of parts) {
-          const trimmed = part.trim();
-          if (trimmed.length === 0) continue;
-
-          // Extract the "data:" line
-          const lines = trimmed.split("\n");
-          for (const line of lines) {
-            if (line.startsWith("data: ")) {
-              const jsonStr = line.slice(6).trim();
-              if (jsonStr.length === 0) continue;
-
-              try {
-                const event: SSEEvent = JSON.parse(jsonStr);
-                handleSSEEvent(event);
-              } catch {
-                // Skip unparseable events
-              }
-            }
-          }
-        }
-      }
-
-      // Process any remaining data in buffer after stream ends
-      if (buffer.trim().length > 0) {
-        const lines = buffer.trim().split("\n");
-        for (const line of lines) {
-          if (line.startsWith("data: ")) {
-            const jsonStr = line.slice(6).trim();
-            if (jsonStr.length === 0) continue;
-            try {
-              const event: SSEEvent = JSON.parse(jsonStr);
-              handleSSEEvent(event);
-            } catch {
-              // Skip unparseable events
-            }
-          }
-        }
-      }
+      setCertificates(payload.certificates);
+      setIneligible(
+        payload.ineligible.length > 0
+          ? payload.ineligible
+          : derivedIneligible,
+      );
+      setConversionWarning(payload.conversion_warning === true);
+      setSuccessCount(payload.certificates.length);
+      setFailureCount(payload.ineligible.length);
+      setProgressPercent(100);
+      setProgressLabel("Generation complete");
+      setPhase("complete");
     } catch (err) {
       setGenError(
         err instanceof Error ? err.message : "Generation failed",
       );
       setPhase("initial");
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
-    eligibleEntries,
+    eligibleEntries.length,
     matchData.overrides,
     matchData.excludedNames,
     trainingMetadata,
     uploadData,
+    derivedIneligible,
   ]);
-
-  // SSE event handler (defined inside component so it can close over setters)
-  function handleSSEEvent(event: SSEEvent) {
-    switch (event.type) {
-      case "progress": {
-        setProgressLabel(
-          `Generated ${event.current} of ${event.total} certificates…`,
-        );
-        setProgressPercent(
-          event.total > 0 ? Math.round((event.current / event.total) * 100) : 0,
-        );
-        setSuccessCount(event.success_count);
-        setFailureCount(event.failure_count);
-        break;
-      }
-      case "complete": {
-        setCertificates(event.certificates);
-        setIneligible(
-          event.ineligible.length > 0
-            ? event.ineligible
-            : derivedIneligible,
-        );
-        setConversionWarning(event.conversion_warning === true);
-        setPhase("complete");
-        setProgressPercent(100);
-        setProgressLabel("Generation complete");
-        break;
-      }
-      case "error": {
-        setGenError(event.message);
-        setPhase("initial");
-        break;
-      }
-      default: {
-        const _exhaustive: never = event;
-        return _exhaustive;
-      }
-    }
-  }
 
   // ── ZIP download handler ──────────────────────────────────────────────────
 
@@ -484,74 +376,6 @@ export default function StepGenerate({
       );
     }
   }, [certificates]);
-
-  // ── Ineligibility table helpers ──────────────────────────────────────────
-
-  const filteredIneligible = useMemo(() => {
-    let list = [...ineligible];
-    if (eligFilter !== "All") {
-      list = list.filter((entry) => entry.status === eligFilter);
-    }
-    list.sort((a, b) => {
-      let cmp = 0;
-      if (eligSortKey === "name") cmp = a.name.localeCompare(b.name);
-      else if (eligSortKey === "status") cmp = a.status.localeCompare(b.status);
-      else cmp = a.reason.localeCompare(b.reason);
-      return eligSortDir === "asc" ? cmp : -cmp;
-    });
-    return list;
-  }, [ineligible, eligFilter, eligSortKey, eligSortDir]);
-
-  const toggleSort = useCallback(
-    (key: "name" | "status" | "reason") => {
-      if (eligSortKey === key) {
-        setEligSortDir((prev) => (prev === "asc" ? "desc" : "asc"));
-      } else {
-        setEligSortKey(key);
-        setEligSortDir("asc");
-      }
-    },
-    [eligSortKey],
-  );
-
-  const eligCounts = useMemo(() => {
-    const counts: Record<IneligibleStatus | "All", number> = {
-      All: ineligible.length,
-      "Not Found": 0,
-      Attendance: 0,
-      Ambiguous: 0,
-    };
-    for (const e of ineligible) {
-      counts[e.status] += 1;
-    }
-    return counts;
-  }, [ineligible]);
-
-  function statusBadge(status: IneligibleStatus) {
-    switch (status) {
-      case "Not Found":
-        return (
-          <Badge className="border-transparent bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-100">
-            <XCircle className="mr-1 h-3 w-3" />
-            Not Found
-          </Badge>
-        );
-      case "Attendance":
-        return (
-          <Badge className="border-transparent bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-100">
-            <AlertTriangle className="mr-1 h-3 w-3" />
-            Attendance
-          </Badge>
-        );
-      case "Ambiguous":
-        return (
-          <Badge className="border-transparent bg-orange-100 text-orange-800 dark:bg-orange-900 dark:text-orange-100">
-            <AlertTriangle className="mr-1 h-3 w-3" />
-            Ambiguous
-          </Badge>
-        );
-    }
-  }
 
   // ── Derived: can preview? ─────────────────────────────────────────────────
 
@@ -736,7 +560,7 @@ export default function StepGenerate({
                           <TableCell>
                             <Button variant="ghost" size="sm" asChild>
                               <a
-                                href={`${API_BASE}/api/pdf?path=${encodeURIComponent(cert.path)}`}
+                                href={pdfViewUrl(cert.path)}
                                 target="_blank"
                                 rel="noopener noreferrer"
                               >
@@ -753,87 +577,7 @@ export default function StepGenerate({
               </div>
             )}
 
-            {/* Ineligibility report */}
-            {filteredIneligible.length > 0 && (
-              <div>
-                <h3 className="mb-2 text-sm font-semibold">
-                  Ineligibility Report ({ineligible.length} total)
-                </h3>
-
-                {/* Filter buttons */}
-                <div className="mb-3 flex flex-wrap items-center gap-1">
-                  {(["All", "Not Found", "Attendance", "Ambiguous"] as const).map(
-                    (filter) => (
-                      <Button
-                        key={filter}
-                        variant={
-                          eligFilter === filter ? "default" : "outline"
-                        }
-                        size="sm"
-                        onClick={() => setEligFilter(filter)}
-                        className="h-7 text-xs"
-                      >
-                        {filter}{" "}
-                        <span className="ml-1 tabular-nums">
-                          ({eligCounts[filter]})
-                        </span>
-                      </Button>
-                    ),
-                  )}
-                </div>
-
-                <div className="rounded-md border">
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead
-                          className="cursor-pointer select-none"
-                          onClick={() => toggleSort("name")}
-                        >
-                          <span className="inline-flex items-center gap-1">
-                            Name
-                            <ArrowUpDown className="h-3 w-3" />
-                          </span>
-                        </TableHead>
-                        <TableHead
-                          className="cursor-pointer select-none w-[120px]"
-                          onClick={() => toggleSort("status")}
-                        >
-                          <span className="inline-flex items-center gap-1">
-                            Status
-                            <ArrowUpDown className="h-3 w-3" />
-                          </span>
-                        </TableHead>
-                        <TableHead
-                          className="cursor-pointer select-none"
-                          onClick={() => toggleSort("reason")}
-                        >
-                          <span className="inline-flex items-center gap-1">
-                            Reason
-                            <ArrowUpDown className="h-3 w-3" />
-                          </span>
-                        </TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {filteredIneligible.map((entry) => (
-                        <TableRow key={`${entry.name}-${entry.status}`}>
-                          <TableCell className="font-medium">
-                            {entry.name}
-                          </TableCell>
-                          <TableCell>
-                            {statusBadge(entry.status)}
-                          </TableCell>
-                          <TableCell className="text-sm text-muted-foreground">
-                            {entry.reason}
-                          </TableCell>
-                        </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
-                </div>
-              </div>
-            )}
+            <IneligibilityReport entries={ineligible} />
 
             {/* Action buttons */}
             <div className="flex items-center justify-between pt-2">

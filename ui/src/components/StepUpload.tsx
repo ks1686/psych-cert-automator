@@ -1,5 +1,6 @@
 import { useState, useCallback } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
+import { API_BASE } from "@/api/client";
 import { Loader2, Upload, FileSpreadsheet } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -83,10 +84,6 @@ interface StepUploadProps {
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
-
-// Use 127.0.0.1 (not "localhost"): on Windows "localhost" can resolve to ::1
-// (IPv6) first, but the backend binds 127.0.0.1 (IPv4) only.
-const BASE_URL = "http://127.0.0.1:8008";
 
 function formatDatetime(iso: string): string {
   try {
@@ -180,7 +177,7 @@ export default function StepUpload({
     setParseResult(null);
 
     try {
-      const response = await fetch(`${BASE_URL}/api/parse`, {
+      const response = await fetch(`${API_BASE}/api/parse`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

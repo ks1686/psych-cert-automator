@@ -170,7 +170,7 @@ def run_pipeline(  # noqa: PLR0913
                         name_zoom=None,
                         match_status="excluded",
                         reason="Excluded from certificate generation",
-                        status=EligibilityStatus.ATTENDANCE_INSUFFICIENT,
+                        status=EligibilityStatus.EXCLUDED,
                     )
                 )
                 continue

@@ -196,6 +196,9 @@ class EligibilityStatus(StrEnum):
     NAME_MATCH_AMBIGUOUS = "name_match_ambiguous"
     """Multiple possible Zoom matches — manual review required."""
 
+    EXCLUDED = "excluded"
+    """User excluded this person from certificate generation."""
+
 
 @dataclass(frozen=True, slots=True)
 class IneligibilityEntry:

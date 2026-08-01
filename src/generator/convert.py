@@ -101,18 +101,22 @@ def _convert_with_mac_word(docx_path: Path, pdf_path: Path) -> bool:
     word_app = Path("/Applications/Microsoft Word.app")
     if not word_app.is_dir():
         return False
-    # AppleScript: open docx, export as PDF, close.
-    script = f'''
-tell application "Microsoft Word"
-  set theDoc to open POSIX file "{docx_path}"
-  set pdfPath to POSIX file "{pdf_path}"
-  save as theDoc file name pdfPath file format format PDF
-  close theDoc saving no
-end tell
-'''
+    # Pass paths via argv — never interpolate into AppleScript source.
+    script = """
+on run argv
+  set docxPath to item 1 of argv
+  set pdfPath to item 2 of argv
+  tell application "Microsoft Word"
+    set theDoc to open POSIX file docxPath
+    set outPath to POSIX file pdfPath
+    save as theDoc file name outPath file format format PDF
+    close theDoc saving no
+  end tell
+end run
+"""
     try:
         completed = subprocess.run(
-            ["osascript", "-e", script],
+            ["osascript", "-e", script, str(docx_path), str(pdf_path)],
             check=False,
             capture_output=True,
             text=True,

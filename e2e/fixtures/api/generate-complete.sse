@@ -1,5 +1,0 @@
-data: {"type":"progress","current":0,"total":2,"success_count":0,"failure_count":0}
-
-data: {"type":"progress","current":2,"total":2,"success_count":2,"failure_count":0}
-
-data: {"type":"complete","certificates":[{"name":"Alex Rivera","ce_type":"APA","filename":"Rivera_CECertificate_Smith_2026-03-20.docx","path":"/tmp/output/Rivera_CECertificate_Smith_2026-03-20.docx"},{"name":"Sam Patel","ce_type":"NASP","filename":"Patel_CECertificate_Smith_2026-03-20.docx","path":"/tmp/output/Patel_CECertificate_Smith_2026-03-20.docx"}],"ineligible":[],"conversion_warning":true}

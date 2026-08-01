@@ -20,7 +20,7 @@ function readFixture(name: string): string {
 const parseJson = readFixture("parse.json");
 const matchJson = readFixture("match.json");
 const sessionsJson = readFixture("sessions.json");
-const generateSse = readFixture("generate-complete.sse");
+const generateJson = readFixture("generate-complete.json");
 
 /** Minimal PDF header bytes so preview can return a non-empty body. */
 const PREVIEW_PDF = Buffer.from(
@@ -98,8 +98,8 @@ function buildFulfillers(state: MockApiState): Map<
         state.generateCallCount += 1;
         await route.fulfill({
           status: 200,
-          contentType: "text/event-stream",
-          body: generateSse,
+          contentType: "application/json",
+          body: generateJson,
         });
       },
     ],

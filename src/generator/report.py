@@ -100,6 +100,8 @@ def _status_fill(status: EligibilityStatus) -> PatternFill:
             return _FILL_AMBIGUOUS
         case EligibilityStatus.ATTENDANCE_INSUFFICIENT:
             return _FILL_INSUFFICIENT
+        case EligibilityStatus.EXCLUDED:
+            return _FILL_INSUFFICIENT
         case EligibilityStatus.ELIGIBLE:
             return PatternFill()
         case _:
