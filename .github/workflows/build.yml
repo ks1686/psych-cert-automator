@@ -122,14 +122,65 @@ jobs:
         timeout-minutes: 5
         run: bun run build
 
+      # ── macOS Developer ID + notarization (skip on PRs) ─────────
+      - name: Import Apple Developer ID certificate
+        if: runner.os == 'macOS' && github.event_name != 'pull_request'
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+        run: |
+          set -euo pipefail
+          CERT_PATH="${RUNNER_TEMP}/developer-id.p12"
+          KEYCHAIN_PATH="${RUNNER_TEMP}/build.keychain-db"
+          echo "$APPLE_CERTIFICATE" | base64 --decode > "$CERT_PATH"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security import "$CERT_PATH" -P "$APPLE_CERTIFICATE_PASSWORD" -A \
+            -t cert -f pkcs12 -k "$KEYCHAIN_PATH"
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s \
+            -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security list-keychain -d user -s "$KEYCHAIN_PATH"
+          security find-identity -v -p codesigning "$KEYCHAIN_PATH"
+          rm -f "$CERT_PATH"
+
+      - name: Prepare App Store Connect API key
+        if: runner.os == 'macOS' && github.event_name != 'pull_request'
+        env:
+          APPLE_API_KEY_CONTENT: ${{ secrets.APPLE_API_KEY_CONTENT }}
+        run: |
+          set -euo pipefail
+          KEY_PATH="${RUNNER_TEMP}/AuthKey.p8"
+          echo "$APPLE_API_KEY_CONTENT" | base64 --decode > "$KEY_PATH"
+          chmod 600 "$KEY_PATH"
+          echo "APPLE_API_KEY_PATH=${KEY_PATH}" >> "$GITHUB_ENV"
+
       # ── Tauri build ─────────────────────────────────────────────
       - name: Build Tauri
-        timeout-minutes: 20
+        timeout-minutes: 30
+        # bash is required on Windows runners (default shell is PowerShell).
+        shell: bash
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
           APPIMAGE_EXTRACT_AND_RUN: "1"
-        run: bun run tauri build
+          # Apple secrets only on non-PR macOS builds (unsigned on PRs / other OSes).
+          APPLE_CERTIFICATE: ${{ runner.os == 'macOS' && github.event_name != 'pull_request' && secrets.APPLE_CERTIFICATE || '' }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ runner.os == 'macOS' && github.event_name != 'pull_request' && secrets.APPLE_CERTIFICATE_PASSWORD || '' }}
+          APPLE_SIGNING_IDENTITY: ${{ runner.os == 'macOS' && github.event_name != 'pull_request' && secrets.APPLE_SIGNING_IDENTITY || '' }}
+          APPLE_TEAM_ID: ${{ runner.os == 'macOS' && github.event_name != 'pull_request' && secrets.APPLE_TEAM_ID || '' }}
+          APPLE_API_ISSUER: ${{ runner.os == 'macOS' && github.event_name != 'pull_request' && secrets.APPLE_API_ISSUER || '' }}
+          APPLE_API_KEY: ${{ runner.os == 'macOS' && github.event_name != 'pull_request' && secrets.APPLE_API_KEY || '' }}
+        run: |
+          set -euo pipefail
+          # Empty strings from GHA expressions still count as set; drop them so Tauri
+          # does not attempt Apple signing/notarization on PRs or non-macOS jobs.
+          if [[ -z "${APPLE_CERTIFICATE:-}" ]]; then
+            unset APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD APPLE_SIGNING_IDENTITY \
+              APPLE_TEAM_ID APPLE_API_ISSUER APPLE_API_KEY APPLE_API_KEY_PATH || true
+          fi
+          bun run tauri build
 
       # ── Verify artifacts ────────────────────────────────────────
       - name: Verify artifact exists
@@ -146,9 +197,43 @@ jobs:
               ;;
             *linux*)
               ls -la src-tauri/target/release/bundle/deb/*.deb
-              ;; 
+              ;;
           esac
           echo "::endgroup::"
+
+      - name: Verify macOS signing and notarization
+        if: success() && runner.os == 'macOS' && github.event_name != 'pull_request'
+        shell: bash
+        run: |
+          set -euo pipefail
+          DMG_PATH=$(find src-tauri/target/release/bundle/dmg -name '*.dmg' -maxdepth 1 | head -n 1)
+          if [[ -z "$DMG_PATH" ]]; then
+            echo "Missing .dmg after build" >&2
+            exit 1
+          fi
+          # Tauri notarizes/staples the .app, then packs it into the .dmg and may remove
+          # the standalone .app. Verify the app bundle inside the DMG.
+          MNT=$(mktemp -d)
+          cleanup() { hdiutil detach "$MNT" -quiet 2>/dev/null || true; rm -rf "$MNT"; }
+          trap cleanup EXIT
+          hdiutil attach "$DMG_PATH" -mountpoint "$MNT" -readonly -nobrowse
+          APP_PATH=$(find "$MNT" -name '*.app' -maxdepth 1 | head -n 1)
+          if [[ -z "$APP_PATH" ]]; then
+            echo "No .app found inside DMG" >&2
+            exit 1
+          fi
+          echo "::group::codesign details"
+          codesign -dv --verbose=2 "$APP_PATH"
+          codesign --verify --deep --strict --verbose=2 "$APP_PATH"
+          echo "::endgroup::"
+          echo "::group::Gatekeeper / notarization"
+          spctl --assess --type execute --verbose=2 "$APP_PATH"
+          xcrun stapler validate "$APP_PATH"
+          echo "::endgroup::"
+          if ! codesign -dv --verbose=2 "$APP_PATH" 2>&1 | grep -q "Developer ID Application"; then
+            echo "App is not signed with Developer ID Application" >&2
+            exit 1
+          fi
 
       # ── Upload ──────────────────────────────────────────────────
       - name: Upload artifact
