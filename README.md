@@ -31,7 +31,7 @@ Download the latest installer from [Releases](https://github.com/ks1686/psych-ce
 
 The app is self-contained — no Python, Node, or other dependencies needed. Works fully offline.
 
-> **macOS note**: On first launch, right-click the app and select "Open" (Gatekeeper workaround for unsigned apps).
+> **macOS note**: Release builds are signed with Developer ID and notarized by Apple. After installing from the `.dmg`, the app should open normally under Gatekeeper.
 
 ## CLI (for automation / scripts)
 
