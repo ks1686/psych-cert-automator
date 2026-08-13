@@ -18,6 +18,14 @@ export default defineConfig({
         __dirname,
         "./ui/src/test/e2e-dialog-stub.ts",
       ),
+      "@tauri-apps/plugin-opener": path.resolve(
+        __dirname,
+        "./ui/src/test/e2e-opener-stub.ts",
+      ),
+      "@tauri-apps/api/path": path.resolve(
+        __dirname,
+        "./ui/src/test/e2e-path-stub.ts",
+      ),
     },
   },
 });

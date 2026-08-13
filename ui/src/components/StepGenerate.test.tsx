@@ -94,6 +94,34 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
+async function selectOutputFolder(
+  user: ReturnType<typeof userEvent.setup>,
+): Promise<void> {
+  await user.click(
+    screen.getByRole("button", { name: /Choose output folder/i }),
+  );
+  await waitFor(() => {
+    expect(screen.getByText(/e2e-certs/)).toBeInTheDocument();
+  });
+}
+
+test("keeps Generate disabled until an output folder is chosen", async () => {
+  render(
+    <StepGenerate
+      onBack={vi.fn()}
+      onReset={vi.fn()}
+      matchData={matchData}
+      trainingMetadata={trainingMetadata}
+      uploadData={uploadData}
+    />,
+  );
+
+  expect(
+    screen.getByRole("button", { name: /Generate All Certificates/i }),
+  ).toBeDisabled();
+  expect(screen.getByText("No folder selected")).toBeInTheDocument();
+});
+
 test("shows Generate Again after a successful generation", async () => {
   const user = userEvent.setup();
   const fetchMock = vi.fn().mockResolvedValue(
@@ -128,6 +156,7 @@ test("shows Generate Again after a successful generation", async () => {
     />,
   );
 
+  await selectOutputFolder(user);
   await user.click(
     screen.getByRole("button", { name: /Generate All Certificates/i }),
   );
@@ -137,6 +166,17 @@ test("shows Generate Again after a successful generation", async () => {
       screen.getByRole("button", { name: /Generate Again/i }),
     ).toBeEnabled();
   });
+
+  const generateCall = fetchMock.mock.calls.find((call) =>
+    String(call[0]).includes("/api/generate"),
+  );
+  expect(generateCall).toBeDefined();
+  const init = generateCall?.[1] as RequestInit;
+  const body = JSON.parse(String(init.body)) as { output_dir: string };
+  expect(body.output_dir).toBe("/tmp/e2e-certs");
+  expect(
+    screen.getByRole("button", { name: /Open output folder/i }),
+  ).toBeEnabled();
 });
 
 test("surfaces generation HTTP errors instead of empty success", async () => {
@@ -159,6 +199,7 @@ test("surfaces generation HTTP errors instead of empty success", async () => {
     />,
   );
 
+  await selectOutputFolder(user);
   await user.click(
     screen.getByRole("button", { name: /Generate All Certificates/i }),
   );

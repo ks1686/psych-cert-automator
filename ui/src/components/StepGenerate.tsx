@@ -1,4 +1,7 @@
-import { useState, useCallback, useMemo } from "react";
+import { useState, useCallback, useMemo, useEffect } from "react";
+import { open } from "@tauri-apps/plugin-dialog";
+import { downloadDir } from "@tauri-apps/api/path";
+import { openPath } from "@tauri-apps/plugin-opener";
 import {
   Loader2,
   Download,
@@ -7,6 +10,7 @@ import {
   XCircle,
   RotateCcw,
   FileDown,
+  FolderOpen,
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -121,6 +125,11 @@ function resolveEligibleEntries(matchData: MatchData): EligibleEntry[] {
   return entries;
 }
 
+function truncatePath(path: string, maxLen = 48): string {
+  if (path.length <= maxLen) return path;
+  return "…" + path.slice(path.length - maxLen + 1);
+}
+
 function deriveIneligibleEntries(
   matchData: MatchData,
 ): IneligibleResult[] {
@@ -212,6 +221,42 @@ export default function StepGenerate({
   const [ineligible, setIneligible] = useState<IneligibleResult[]>([]);
   const [conversionWarning, setConversionWarning] = useState(false);
   const [previewIsPdf, setPreviewIsPdf] = useState(true);
+  const [outputDir, setOutputDir] = useState("");
+
+  useEffect(() => {
+    void downloadDir()
+      .then((dir) => {
+        setOutputDir((current) => current || dir);
+      })
+      .catch(() => {
+        // Browser tests and non-Tauri runs require an explicit folder pick.
+      });
+  }, []);
+
+  const handleChooseFolder = useCallback(async () => {
+    try {
+      const selected = await open({
+        title: "Choose certificate output folder",
+        directory: true,
+        multiple: false,
+        defaultPath: outputDir || undefined,
+      });
+      if (selected !== null && typeof selected === "string") {
+        setOutputDir(selected);
+      }
+    } catch {
+      setGenError("Could not open folder dialog. Is this running in Tauri?");
+    }
+  }, [outputDir]);
+
+  const handleOpenFolder = useCallback(async () => {
+    if (!outputDir) return;
+    try {
+      await openPath(outputDir);
+    } catch {
+      setGenError("Could not open the output folder in the file manager.");
+    }
+  }, [outputDir]);
 
   // ── Preview handler ──────────────────────────────────────────────────────
 
@@ -265,7 +310,7 @@ export default function StepGenerate({
   // ── Generation handler ───────────────────────────────────────────────────
 
   const handleGenerate = useCallback(async () => {
-    if (eligibleEntries.length === 0) return;
+    if (eligibleEntries.length === 0 || !outputDir) return;
 
     setPhase("generating");
     setGenError(null);
@@ -302,7 +347,7 @@ export default function StepGenerate({
           is_virtual: trainingMetadata.is_virtual,
           location: trainingMetadata.location,
           end_date: trainingMetadata.end_date,
-          output_dir: "./output",
+          output_dir: outputDir,
         }),
       });
 
@@ -342,6 +387,7 @@ export default function StepGenerate({
     trainingMetadata,
     uploadData,
     derivedIneligible,
+    outputDir,
   ]);
 
   // ── ZIP download handler ──────────────────────────────────────────────────
@@ -451,6 +497,34 @@ export default function StepGenerate({
 
         {/* ── Generate sub-section ──────────────────────────────────────── */}
         <div className="space-y-4 rounded-md border p-4">
+            <div className="space-y-2">
+              <h3 className="text-sm font-semibold">Output folder</h3>
+              <p className="text-xs text-muted-foreground">
+                Certificates are saved here as individual files. Choose
+                Downloads or any other folder.
+              </p>
+              <div className="flex items-center gap-3">
+                <p
+                  className="min-w-0 flex-1 truncate font-mono text-xs text-muted-foreground"
+                  title={outputDir || undefined}
+                  data-testid="output-folder-path"
+                >
+                  {outputDir
+                    ? truncatePath(outputDir)
+                    : "No folder selected"}
+                </p>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={handleChooseFolder}
+                  disabled={phase === "generating"}
+                >
+                  <FolderOpen className="mr-2 h-4 w-4" />
+                  Choose output folder
+                </Button>
+              </div>
+            </div>
+
             <div className="flex items-center justify-between">
               <div>
                 <h3 className="text-sm font-semibold">
@@ -464,7 +538,9 @@ export default function StepGenerate({
               <Button
                 onClick={handleGenerate}
                 disabled={
-                  phase === "generating" || eligibleEntries.length === 0
+                  phase === "generating" ||
+                  eligibleEntries.length === 0 ||
+                  !outputDir
                 }
               >
                 {phase === "generating" ? (
@@ -580,7 +656,7 @@ export default function StepGenerate({
             <IneligibilityReport entries={ineligible} />
 
             {/* Action buttons */}
-            <div className="flex items-center justify-between pt-2">
+            <div className="flex items-center justify-between gap-3 pt-2">
               <Button
                 variant="outline"
                 onClick={onReset}
@@ -590,10 +666,16 @@ export default function StepGenerate({
               </Button>
 
               {certificates.length > 0 && (
-                <Button onClick={handleDownloadZip}>
-                  <Download className="mr-2 h-4 w-4" />
-                  Download All as ZIP
-                </Button>
+                <div className="flex items-center gap-2">
+                  <Button variant="outline" onClick={handleOpenFolder}>
+                    <FolderOpen className="mr-2 h-4 w-4" />
+                    Open output folder
+                  </Button>
+                  <Button onClick={handleDownloadZip}>
+                    <Download className="mr-2 h-4 w-4" />
+                    Download All as ZIP
+                  </Button>
+                </div>
               )}
             </div>
           </div>

@@ -130,4 +130,13 @@ export async function advanceToGenerateStep(
   await expect(
     page.getByRole("heading", { name: /Generate Certificates/i }),
   ).toBeVisible();
+
+  await page.evaluate((output) => {
+    const w = window as Window & {
+      __E2E_PATHS__?: { zoom?: string; qualtrics?: string; output?: string };
+    };
+    w.__E2E_PATHS__ = { ...w.__E2E_PATHS__, output };
+  }, "/tmp/e2e-certs");
+  await page.getByRole("button", { name: /Choose output folder/i }).click();
+  await expect(page.getByText(/e2e-certs/)).toBeVisible();
 }
