@@ -131,7 +131,7 @@ test("shows Generate Again after a successful generation", async () => {
           {
             name: "Alex Rivera",
             ce_type: "APA",
-            filename: "Rivera_CECertificate_Smith_2026-07-21.docx",
+            filename: "Rivera_CECertificate_Smith_7.21.26.docx",
             path: "mock-token",
           },
         ],

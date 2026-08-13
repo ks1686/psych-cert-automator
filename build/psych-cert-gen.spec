@@ -177,6 +177,7 @@ _additional_modules = [
     "click.types",
     "click.utils",
     "yaml",
+    "dxpdf",
 ]
 
 _hidden_imports = (

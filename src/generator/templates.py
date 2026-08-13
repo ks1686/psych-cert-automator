@@ -14,7 +14,9 @@ from lxml import etree
 TemplateKey = Literal["apa", "ny", "nasp", "attendance"]
 
 _W_NS = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+_XML_SPACE = "{http://www.w3.org/XML/1998/namespace}space"
 _NSMAP = {"w": _W_NS}
+_HYPERLINK_INSTR_RE = re.compile(r'^\s*HYPERLINK\s+".*"\s*$')
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _TEMPLATES_DIR = _REPO_ROOT / "templates"
@@ -143,17 +145,12 @@ def build_replacements(key: TemplateKey, ctx: TemplateRenderContext) -> dict[str
             _NASP_VIRTUAL_PHRASE if ctx.is_virtual else f"at {location}"
         )
         return {
-            "This is to certify that NAME has attended": (
-                f"This is to certify that {name} has attended"
-            ),
-            "“Program title”": f"“{title}”",
-            '"Program title"': f'"{title}"',
-            "presented by Name, Degree": f"presented by {instructor}",
-            f"on DATE from TIME – TIME ET {_NASP_DELIVERY_OPTIONS}": (
-                f"on {ctx.date_display} from {time_display} ET {delivery}"
-            ),
+            "NAME": name,
+            "Program title": title,
+            "Name, Degree": instructor,
+            "TIME – TIME ET": f"{time_display} ET",  # noqa: RUF001
+            _NASP_DELIVERY_OPTIONS: delivery,
             "X continuing education": f"{credits} continuing education",
-            # Header date (standalone paragraph); apply after longer DATE phrases.
             "DATE": ctx.date_display,
         }
 
@@ -171,8 +168,10 @@ def build_replacements(key: TemplateKey, ctx: TemplateRenderContext) -> dict[str
 def fill_template(template: Path, destination: Path, replacements: dict[str, str]) -> None:
     """Copy ``template`` to ``destination`` with literal placeholder replacements.
 
-    Replacements are applied per paragraph (concatenated ``w:t`` runs) so tokens
-    split across runs still match. Longer keys are applied first.
+    Replacements are applied per leaf paragraph (concatenated ``w:t`` runs) so
+    tokens split across runs still match. Only runs that cover a match are
+    updated, so neighboring bold/underline formatting stays intact. Longer keys
+    are applied first.
     """
     ordered = sorted(replacements.items(), key=lambda item: len(item[0]), reverse=True)
     destination.parent.mkdir(parents=True, exist_ok=True)
@@ -185,28 +184,90 @@ def fill_template(template: Path, destination: Path, replacements: dict[str, str
             zout.writestr(info, raw)
 
 
-def _replace_in_xml(raw: bytes, ordered: list[tuple[str, str]]) -> bytes:
+def _replace_in_xml(
+    raw: bytes,
+    ordered: list[tuple[str, str]],
+) -> bytes:
     root = etree.fromstring(raw)
     paragraphs = root.xpath(".//w:p", namespaces=_NSMAP)
     for paragraph in paragraphs:
+        if paragraph.xpath("./descendant::w:p", namespaces=_NSMAP):
+            continue
         _replace_in_paragraph(paragraph, ordered)
+    _strip_visible_field_instructions(root)
+    _strip_highlights(root)
     return etree.tostring(root, xml_declaration=True, encoding="UTF-8", standalone=True)
+
+
+def _strip_visible_field_instructions(root: etree.ElementBase) -> None:
+    for node in root.xpath(".//w:t", namespaces=_NSMAP):
+        if node.text and _HYPERLINK_INSTR_RE.match(node.text):
+            node.text = ""
+
+
+def _strip_highlights(root: etree.ElementBase) -> None:
+    for highlight in root.xpath(".//w:highlight", namespaces=_NSMAP):
+        parent = highlight.getparent()
+        if parent is not None:
+            parent.remove(highlight)
 
 
 def _replace_in_paragraph(
     paragraph: etree.ElementBase,
     ordered: list[tuple[str, str]],
 ) -> None:
-    text_nodes = paragraph.xpath(".//w:t", namespaces=_NSMAP)
-    if not text_nodes:
-        return
-    full = "".join((node.text or "") for node in text_nodes)
-    updated = full
     for key, value in ordered:
-        if key in updated:
-            updated = updated.replace(key, value)
-    if updated == full:
+        if not key:
+            continue
+        text_nodes = paragraph.xpath(".//w:t", namespaces=_NSMAP)
+        if not text_nodes:
+            return
+        full = "".join((node.text or "") for node in text_nodes)
+        starts: list[int] = []
+        idx = 0
+        while True:
+            pos = full.find(key, idx)
+            if pos == -1:
+                break
+            starts.append(pos)
+            idx = pos + len(key)
+        for start in reversed(starts):
+            text_nodes = paragraph.xpath(".//w:t", namespaces=_NSMAP)
+            _splice_value(text_nodes, start, start + len(key), value)
+
+
+def _splice_value(
+    text_nodes: list[etree.ElementBase],
+    start: int,
+    end: int,
+    value: str,
+) -> None:
+    offset = 0
+    covering: list[tuple[etree.ElementBase, int]] = []
+    for node in text_nodes:
+        text = node.text or ""
+        node_start = offset
+        node_end = offset + len(text)
+        offset = node_end
+        if node_end <= start or node_start >= end:
+            continue
+        covering.append((node, node_start))
+    if not covering:
         return
-    text_nodes[0].text = updated
-    for node in text_nodes[1:]:
-        node.text = ""
+    first, first_start = covering[0]
+    prefix = (first.text or "")[: start - first_start]
+    last, last_start = covering[-1]
+    suffix = (last.text or "")[end - last_start :]
+    if first is last:
+        _set_text(first, prefix + value + suffix)
+        return
+    _set_text(first, prefix + value)
+    for node, _node_start in covering[1:-1]:
+        _set_text(node, "")
+    _set_text(last, suffix)
+
+
+def _set_text(node: etree.ElementBase, text: str) -> None:
+    node.text = text
+    if text[:1].isspace() or text[-1:].isspace():
+        node.set(_XML_SPACE, "preserve")

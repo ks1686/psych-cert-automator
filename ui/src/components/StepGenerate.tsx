@@ -488,8 +488,8 @@ export default function StepGenerate({
             )}
             {previewPdfBytes && !previewIsPdf && (
               <p className="text-sm text-muted-foreground">
-                Preview returned a Word document (PDF converter not available on
-                this machine). Generation will still write filled certificates.
+                Preview returned a Word document (PDF conversion failed).
+                Generation will still write filled certificates.
               </p>
             )}
           </div>
@@ -593,9 +593,8 @@ export default function StepGenerate({
           <div className="space-y-6">
             {conversionWarning && (
               <div className="rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-700 dark:bg-amber-950/40 dark:text-amber-100">
-                PDF conversion was unavailable on this machine. Filled Word
-                (`.docx`) certificates were written instead. Install LibreOffice
-                for PDF output on Windows, macOS, or Linux.
+                PDF conversion failed. Filled Word (`.docx`) certificates were
+                written instead.
               </div>
             )}
             {/* Certificate table */}
