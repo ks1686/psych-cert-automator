@@ -10,6 +10,8 @@ const __dirname = path.dirname(__filename);
 
 const host = process.env.TAURI_DEV_HOST;
 const e2eDialogStub = path.resolve(__dirname, "./ui/src/test/e2e-dialog-stub.ts");
+const e2eOpenerStub = path.resolve(__dirname, "./ui/src/test/e2e-opener-stub.ts");
+const e2ePathStub = path.resolve(__dirname, "./ui/src/test/e2e-path-stub.ts");
 
 // https://vite.dev/config/
 export default defineConfig(async () => ({
@@ -18,9 +20,13 @@ export default defineConfig(async () => ({
   resolve: {
     alias: {
       "@": path.resolve(__dirname, "./ui/src"),
-      // Browser Playwright runs without Tauri; stub the native file dialog.
+      // Browser Playwright runs without Tauri; stub native dialogs / paths.
       ...(process.env.VITE_E2E === "1"
-        ? { "@tauri-apps/plugin-dialog": e2eDialogStub }
+        ? {
+            "@tauri-apps/plugin-dialog": e2eDialogStub,
+            "@tauri-apps/plugin-opener": e2eOpenerStub,
+            "@tauri-apps/api/path": e2ePathStub,
+          }
         : {}),
     },
   },

@@ -208,9 +208,10 @@ export default function StartupScreen({ onReady }: StartupScreenProps) {
 
       const unlistenError = await listen<string>("sidecar-error", (event) => {
         if (!mountedRef.current || readyHandledRef.current) return;
-        clearAllTimers();
-        setState("error");
-        setErrorMessage(tryParsePayload(event.payload));
+        // Health polling is the source of truth. A missing sidecar binary
+        // during `tauri dev` is expected when the FastAPI backend is started
+        // separately (see README).
+        appendLogLines(tryParsePayload(event.payload));
       });
       unlistenFns.current.push(unlistenError);
 
