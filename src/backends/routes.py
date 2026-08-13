@@ -401,9 +401,8 @@ async def match_endpoint(request: MatchRequest) -> MatchResponse:
 async def preview_endpoint(request: PreviewRequest) -> StreamingResponse:
     """Generate a single certificate preview from the official Word template.
 
-    Returns a PDF when a converter is available on this platform; otherwise
-    returns the filled ``.docx`` (soft-fail) so preview never hard-depends on
-    LibreOffice/Word being installed.
+    Returns a PDF when conversion succeeds; otherwise returns the filled
+    ``.docx`` (soft-fail) so preview never hard-depends on a converter.
     """
     issue_date = request.issue_date or datetime.now(tz=timezone.utc).date()  # noqa: UP017
 

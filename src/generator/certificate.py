@@ -57,9 +57,9 @@ def generate_certificate(
 ) -> str:
     """Generate one certificate from the official Word template for its CE type.
 
-    Writes a filled ``.docx``. When LibreOffice or Microsoft Word is available,
-    also converts to PDF and returns the PDF path. Otherwise returns the
-    ``.docx`` path and logs a warning.
+    Writes a filled ``.docx``. Converts to PDF with bundled ``dxpdf`` (LibreOffice
+    or Microsoft Word as fallback) and returns the PDF path. If conversion fails,
+    returns the ``.docx`` path and logs a warning.
 
     Args:
         output: Fully populated certificate data.

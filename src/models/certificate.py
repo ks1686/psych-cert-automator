@@ -28,6 +28,11 @@ _WINDOWS_RESERVED = frozenset(
 )
 
 
+def format_output_date(value: date) -> str:
+    """Return ``M.D.YY`` with dots, e.g. ``3.15.26``."""
+    return f"{value.month}.{value.day}.{value.year % 100:02d}"
+
+
 def _filename_part(value: str) -> str:
     cleaned = _UNSAFE_FILENAME_CHARS.sub("_", value.strip())
     cleaned = cleaned.strip("._") or "certificate"
@@ -87,14 +92,16 @@ class CertificateOutput:
 
     @property
     def output_basename(self) -> str:
-        """Filename stem: ``{LastName}_CECertificate_{InstructorLast}_{Date}``.
+        """Filename stem: ``{LastName}_CECertificate_{InstructorLast}_{M.D.YY}``.
 
         Recipient and instructor last names are taken from the final whitespace-
         separated token. Unsafe characters (including ``@``) are sanitized.
+        The date uses dots (e.g. ``3.15.26``) and is not passed through
+        filename sanitization, so dots are kept.
         """
         recipient_last = _last_name(self.full_name)
         instructor_last = _last_name(self.instructor_name)
-        date_str = self.training_date.isoformat()
+        date_str = format_output_date(self.training_date)
         return "_".join(
             [
                 _filename_part(recipient_last),
@@ -158,7 +165,7 @@ def _basename_candidates(output: CertificateOutput) -> list[str]:
     recipient_last = _filename_part(_last_name(output.full_name))
     recipient_first = _filename_part(_first_name(output.full_name))
     instructor_last = _filename_part(_last_name(output.instructor_name))
-    date_str = output.training_date.isoformat()
+    date_str = format_output_date(output.training_date)
     ce_part = _filename_part(str(output.ce_type))
 
     with_first = "_".join(

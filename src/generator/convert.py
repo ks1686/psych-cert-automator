@@ -1,4 +1,4 @@
-"""Best-effort Word → PDF conversion (LibreOffice / Microsoft Word)."""
+"""Best-effort Word → PDF conversion (dxpdf, then LibreOffice / Microsoft Word)."""
 
 from __future__ import annotations
 
@@ -6,6 +6,8 @@ import logging
 import shutil
 import subprocess
 from pathlib import Path
+
+import dxpdf
 
 logger = logging.getLogger(__name__)
 
@@ -30,15 +32,18 @@ _LIBREOFFICE_CANDIDATES = (
 def convert_docx_to_pdf(docx_path: Path) -> Path | None:
     """Convert ``docx_path`` to a sibling PDF when a converter is available.
 
-    Tries LibreOffice/soffice first, then macOS Microsoft Word via AppleScript.
-    Returns the PDF path on success, or ``None`` if conversion is unavailable
-    or fails (caller should keep the ``.docx``).
+    Tries bundled ``dxpdf`` first, then LibreOffice/soffice, then macOS
+    Microsoft Word via AppleScript. Returns the PDF path on success, or
+    ``None`` if conversion is unavailable or fails (caller should keep the
+    ``.docx``).
     """
     docx_path = docx_path.resolve()
     if not docx_path.is_file() or docx_path.suffix.lower() != ".docx":
         return None
 
     pdf_path = docx_path.with_suffix(".pdf")
+    if _convert_with_dxpdf(docx_path, pdf_path):
+        return pdf_path
     if _convert_with_libreoffice(docx_path, pdf_path):
         return pdf_path
     if _convert_with_mac_word(docx_path, pdf_path):
@@ -48,6 +53,15 @@ def convert_docx_to_pdf(docx_path: Path) -> Path | None:
         docx_path.name,
     )
     return None
+
+
+def _convert_with_dxpdf(docx_path: Path, pdf_path: Path) -> bool:
+    try:
+        dxpdf.convert_file(str(docx_path), str(pdf_path))
+    except (OSError, ValueError, RuntimeError) as exc:
+        logger.warning("dxpdf conversion failed: %s", exc)
+        return False
+    return pdf_path.is_file()
 
 
 def _convert_with_libreoffice(docx_path: Path, pdf_path: Path) -> bool:
