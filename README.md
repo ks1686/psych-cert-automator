@@ -1,8 +1,11 @@
 # CE Certificate Automator
 
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Latest release](https://img.shields.io/github/v/release/ks1686/psych-cert-automator)](https://github.com/ks1686/psych-cert-automator/releases/latest)
+
 **Turns your Zoom attendance and Qualtrics survey into individual CE certificates — automatically.**
 
-Built for the GSAPP Psychology Department at Rutgers.
+Built for the GSAPP Psychology Department at Rutgers. Desktop installers for macOS, Windows, and Linux — no Python required for end users.
 
 ---
 
