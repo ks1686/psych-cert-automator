@@ -22,7 +22,8 @@ export type IneligibleStatus =
   | "Not Found"
   | "Attendance"
   | "Ambiguous"
-  | "Excluded";
+  | "Excluded"
+  | "Not Offered";
 
 interface IneligibilityReportProps {
   entries: IneligibleResult[];
@@ -56,6 +57,13 @@ function statusBadge(status: IneligibleStatus) {
         <Badge className="border-transparent bg-slate-100 text-slate-800 dark:bg-slate-800 dark:text-slate-100">
           <XCircle className="mr-1 h-3 w-3" />
           Excluded
+        </Badge>
+      );
+    case "Not Offered":
+      return (
+        <Badge className="border-transparent bg-violet-100 text-violet-800 dark:bg-violet-900 dark:text-violet-100">
+          <AlertTriangle className="mr-1 h-3 w-3" />
+          Not Offered
         </Badge>
       );
     default: {
@@ -106,6 +114,7 @@ export function IneligibilityReport({ entries }: IneligibilityReportProps) {
       Attendance: 0,
       Ambiguous: 0,
       Excluded: 0,
+      "Not Offered": 0,
     };
     for (const e of entries) {
       counts[e.status] += 1;
@@ -113,7 +122,7 @@ export function IneligibilityReport({ entries }: IneligibilityReportProps) {
     return counts;
   }, [entries]);
 
-  if (filteredIneligible.length === 0) {
+  if (entries.length === 0) {
     return null;
   }
 
@@ -124,7 +133,7 @@ export function IneligibilityReport({ entries }: IneligibilityReportProps) {
       </h3>
 
       <div className="mb-3 flex flex-wrap items-center gap-1">
-        {(["All", "Not Found", "Attendance", "Ambiguous", "Excluded"] as const).map(
+        {(["All", "Not Found", "Attendance", "Ambiguous", "Excluded", "Not Offered"] as const).map(
           (filter) => (
             <Button
               key={filter}
@@ -144,45 +153,56 @@ export function IneligibilityReport({ entries }: IneligibilityReportProps) {
         <Table>
           <TableHeader>
             <TableRow>
-              <TableHead
-                className="cursor-pointer select-none"
-                onClick={() => toggleSort("name")}
-              >
-                <span className="inline-flex items-center gap-1">
+              <TableHead className="p-0">
+                <button
+                  type="button"
+                  className="flex w-full cursor-pointer select-none items-center gap-1 px-4 py-2 text-left"
+                  onClick={() => toggleSort("name")}
+                >
                   Name
                   <ArrowUpDown className="h-3 w-3" />
-                </span>
+                </button>
               </TableHead>
-              <TableHead
-                className="cursor-pointer select-none w-[120px]"
-                onClick={() => toggleSort("status")}
-              >
-                <span className="inline-flex items-center gap-1">
+              <TableHead className="w-[120px] p-0">
+                <button
+                  type="button"
+                  className="flex w-full cursor-pointer select-none items-center gap-1 px-4 py-2 text-left"
+                  onClick={() => toggleSort("status")}
+                >
                   Status
                   <ArrowUpDown className="h-3 w-3" />
-                </span>
+                </button>
               </TableHead>
-              <TableHead
-                className="cursor-pointer select-none"
-                onClick={() => toggleSort("reason")}
-              >
-                <span className="inline-flex items-center gap-1">
+              <TableHead className="p-0">
+                <button
+                  type="button"
+                  className="flex w-full cursor-pointer select-none items-center gap-1 px-4 py-2 text-left"
+                  onClick={() => toggleSort("reason")}
+                >
                   Reason
                   <ArrowUpDown className="h-3 w-3" />
-                </span>
+                </button>
               </TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
-            {filteredIneligible.map((entry) => (
-              <TableRow key={`${entry.name}-${entry.status}`}>
-                <TableCell className="font-medium">{entry.name}</TableCell>
-                <TableCell>{statusBadge(entry.status)}</TableCell>
-                <TableCell className="text-sm text-muted-foreground">
-                  {entry.reason}
+            {filteredIneligible.length === 0 ? (
+              <TableRow>
+                <TableCell colSpan={3} className="text-sm text-muted-foreground">
+                  No rows match this filter.
                 </TableCell>
               </TableRow>
-            ))}
+            ) : (
+              filteredIneligible.map((entry) => (
+                <TableRow key={`${entry.name}-${entry.status}`}>
+                  <TableCell className="font-medium">{entry.name}</TableCell>
+                  <TableCell>{statusBadge(entry.status)}</TableCell>
+                  <TableCell className="text-sm text-muted-foreground">
+                    {entry.reason}
+                  </TableCell>
+                </TableRow>
+              ))
+            )}
           </TableBody>
         </Table>
       </div>

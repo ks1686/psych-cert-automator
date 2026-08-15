@@ -4,9 +4,9 @@ Five endpoints wrapping the existing pipeline, parser, matcher, and generator:
 
     POST /api/parse        — parse Zoom + Qualtrics reports
     POST /api/match        — match Qualtrics names to Zoom participants
-    POST /api/preview      — generate a single PDF preview in memory
-    POST /api/generate     — run the full pipeline (SSE progress)
-    POST /api/download-zip — bundle PDF files into a ZIP archive
+    POST /api/preview      — generate a single certificate preview
+    POST /api/generate     — run the full pipeline (JSON result)
+    POST /api/download-zip — bundle certificate files into a ZIP archive
 """
 
 from __future__ import annotations
@@ -226,10 +226,10 @@ def _result_status(status: str) -> str:
             return "Ambiguous"
         case "excluded":
             return "Excluded"
-        case "eligible":
-            return "Eligible"
-        case _:
-            return "Attendance"
+        case "ce_type_not_offered":
+            return "Not Offered"
+        case "eligible" | _:
+            return "Eligible" if status == "eligible" else "Attendance"
 
 
 def _register_generated_file(path: Path) -> str:

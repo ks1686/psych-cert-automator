@@ -16,6 +16,7 @@ Platform target triples:
 
 from __future__ import annotations
 
+import os
 import platform
 import shutil
 import subprocess
@@ -139,7 +140,7 @@ def _rename_and_place(binary_path: Path, target_triple: str) -> Path:
 
 def main() -> None:
     """Orchestrate the full build pipeline."""
-    target_triple = _detect_target_triple()
+    target_triple = os.environ.get("TARGET_TRIPLE") or _detect_target_triple()
     print(f"[INFO] Target platform: {target_triple}")
 
     _check_pyinstaller()

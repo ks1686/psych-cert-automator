@@ -13,6 +13,7 @@ import re
 import signal
 import sys
 import threading
+from datetime import UTC, datetime
 from pathlib import Path
 
 # Force line-buffered stdout/stderr. Python defaults to full block-buffering
@@ -26,13 +27,13 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from fastapi import FastAPI  # noqa: E402
+from fastapi import FastAPI, HTTPException  # noqa: E402
 from fastapi.middleware.cors import CORSMiddleware  # noqa: E402
 from pydantic import BaseModel  # noqa: E402
 
 from src.backends.routes import router  # noqa: E402
 from src.models.session import SessionConfig  # noqa: E402
-from src.models.training import TrainingMetadata  # noqa: E402
+from src.models.training import TrainingConfigError, TrainingMetadata  # noqa: E402
 
 
 def _stdin_listener() -> None:
@@ -113,7 +114,7 @@ async def list_sessions() -> list[dict[str, str | int | bool | None]]:
     sessions: list[dict[str, str | int | bool | None]] = []
     if not SESSIONS_DIR.exists():
         return sessions
-    for session_id, f in enumerate(sorted(SESSIONS_DIR.glob("*.json"))):
+    for f in sorted(SESSIONS_DIR.glob("*.json")):
         try:
             session = SessionConfig.load(f)
         except (json.JSONDecodeError, OSError, TypeError, ValueError):
@@ -121,7 +122,7 @@ async def list_sessions() -> list[dict[str, str | int | bool | None]]:
         meta = session.metadata
         sessions.append(
             {
-                "id": session_id,
+                "id": f.stem,
                 "title": meta.title,
                 "date": meta.date.isoformat(),
                 "end_date": meta.end_date.isoformat() if meta.end_date else None,
@@ -146,26 +147,30 @@ async def create_session(session_request: _SessionRequest) -> dict[str, str]:
     """Create and persist a new certificate-generation session."""
     SESSIONS_DIR.mkdir(parents=True, exist_ok=True)
     end_date = session_request.end_date if session_request.is_multi_day else None
-    metadata = TrainingMetadata.from_config(
-        {
-            "title": session_request.title,
-            "date": session_request.date,
-            "instructor_name": session_request.instructor,
-            "ce_credits": session_request.ce_credits,
-            "ce_types_offered": [
-                ce_type.strip()
-                for ce_type in session_request.ce_types.split(",")
-                if ce_type.strip()
-            ],
-            "session_start": session_request.start_time,
-            "session_end": session_request.end_time,
-            "end_date": end_date,
-            "is_virtual": session_request.is_virtual,
-            "location": None if session_request.is_virtual else session_request.location,
-        }
-    )
+    try:
+        metadata = TrainingMetadata.from_config(
+            {
+                "title": session_request.title,
+                "date": session_request.date,
+                "instructor_name": session_request.instructor,
+                "ce_credits": session_request.ce_credits,
+                "ce_types_offered": [
+                    ce_type.strip()
+                    for ce_type in session_request.ce_types.split(",")
+                    if ce_type.strip()
+                ],
+                "session_start": session_request.start_time,
+                "session_end": session_request.end_time,
+                "end_date": end_date,
+                "is_virtual": session_request.is_virtual,
+                "location": None if session_request.is_virtual else session_request.location,
+            }
+        )
+    except TrainingConfigError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     session = SessionConfig(metadata=metadata)
-    name = _slugify(session.metadata.title)
+    stamp = datetime.now(tz=UTC).strftime("%Y%m%d%H%M%S")
+    name = f"{_slugify(session.metadata.title)}-{stamp}"
     path = SESSIONS_DIR / f"{name}.json"
     session.save(path)
     return {

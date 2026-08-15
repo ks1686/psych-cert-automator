@@ -157,9 +157,11 @@ test("shows Generate Again after a successful generation", async () => {
   );
 
   await selectOutputFolder(user);
-  await user.click(
+  const generatePromise = user.click(
     screen.getByRole("button", { name: /Generate All Certificates/i }),
   );
+  expect(screen.queryByText(/%$/)).not.toBeInTheDocument();
+  await generatePromise;
 
   await waitFor(() => {
     expect(

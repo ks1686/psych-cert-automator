@@ -11,10 +11,12 @@ from src.backends.routes import (
     DownloadZipRequest,
     GenerateRequest,
     MatchRequest,
+    ParseRequest,
     PreviewRequest,
     download_zip_endpoint,
     generate_endpoint,
     match_endpoint,
+    parse_endpoint,
     preview_endpoint,
 )
 
@@ -276,3 +278,19 @@ def test_excluded_status_label() -> None:
 
     assert _result_status("excluded") == "Excluded"
     assert _result_status("attendance_insufficient") == "Attendance"
+    assert _result_status("ce_type_not_offered") == "Not Offered"
+
+
+def test_parse_endpoint_returns_host_and_counts() -> None:
+    request = ParseRequest.model_validate(
+        {
+            "zoom_path": "tests/fixtures/sample_zoom.xlsx",
+            "qualtrics_path": "tests/fixtures/sample_qualtrics.xlsx",
+        },
+    )
+    response = asyncio.run(parse_endpoint(request))
+    assert response.participant_count >= 1
+    assert response.request_count >= 1
+    assert any(p.name_raw == "Hannah Lee" for p in response.participants)
+    assert response.zoom_host is not None
+    assert "Jessica Benas" in response.zoom_host

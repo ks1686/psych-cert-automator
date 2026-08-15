@@ -1,4 +1,4 @@
-"""Certificate generation — pure-Python PDF generation (fpdf2) and ineligibility report output."""
+"""Certificate generation — official Word templates, PDF convert, ineligibility report."""
 
 from src.generator.certificate import generate_all, generate_certificate
 from src.generator.report import generate_ineligibility_report

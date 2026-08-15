@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+import sys
 from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
@@ -19,7 +20,6 @@ _NSMAP = {"w": _W_NS}
 _HYPERLINK_INSTR_RE = re.compile(r'^\s*HYPERLINK\s+".*"\s*$')
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
-_TEMPLATES_DIR = _REPO_ROOT / "templates"
 
 _APA_RE = re.compile(r"\bAPA\b|psychologist\s*\(\s*APA\s*\)", re.IGNORECASE)
 _NY_RE = re.compile(
@@ -54,8 +54,15 @@ class TemplateRenderContext:
 
 
 def templates_dir() -> Path:
-    """Return the project templates directory."""
-    return _TEMPLATES_DIR
+    """Return the Word-templates directory.
+
+    Packaged PyInstaller builds extract datas under ``sys._MEIPASS``.
+    Dev / pytest use the repo-root ``templates/`` folder.
+    """
+    meipass = getattr(sys, "_MEIPASS", None)
+    if isinstance(meipass, str) and meipass:
+        return Path(meipass) / "templates"
+    return _REPO_ROOT / "templates"
 
 
 def resolve_template_key(ce_type: str) -> TemplateKey:
@@ -79,7 +86,7 @@ def resolve_template_key(ce_type: str) -> TemplateKey:
 def template_path_for(ce_type: str) -> Path:
     """Return the absolute path to the Word template for ``ce_type``."""
     key = resolve_template_key(ce_type)
-    path = _TEMPLATES_DIR / f"{key}.docx"
+    path = templates_dir() / f"{key}.docx"
     if not path.is_file():
         msg = f"Missing certificate template: {path}"
         raise FileNotFoundError(msg)
