@@ -250,6 +250,7 @@ export default function StartupScreen({ onReady }: StartupScreenProps) {
     setElapsed(0);
     readyHandledRef.current = false;
     startTimeRef.current = Date.now();
+    clearAllTimers();
 
     // Restart elapsed counter.
     elapsedTimer.current = setInterval(() => {
@@ -270,7 +271,7 @@ export default function StartupScreen({ onReady }: StartupScreenProps) {
 
     // Emit a best-effort retry event so the Rust sidecar manager can react.
     void emit("retry-sidecar", { attempt: nextCount });
-  }, [retryCount, startHealthPolling]);
+  }, [retryCount, startHealthPolling, clearAllTimers]);
 
   // ── quit ───────────────────────────────────────────────────────────────
 

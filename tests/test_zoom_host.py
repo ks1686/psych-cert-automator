@@ -4,15 +4,11 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
-
 from src.generator.zoom_host import extract_zoom_host, host_matches_name
 
 
 def test_extract_zoom_host_from_sample() -> None:
-    sample = Path("input/Zoom Attendance Report Arnoff 3.20.26.xlsx")
-    if not sample.is_file():
-        pytest.skip("sample Zoom report not present")
+    sample = Path("tests/fixtures/sample_zoom.xlsx")
     host = extract_zoom_host(str(sample))
     assert host is not None
     assert "Jessica Benas" in host

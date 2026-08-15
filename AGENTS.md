@@ -11,7 +11,7 @@ Tauri v2 desktop app for generating CE certificates from Zoom attendance and Qua
 | Desktop shell | Tauri v2 (Rust) |
 | Frontend | React + TypeScript + Vite + shadcn/ui + Tailwind CSS v4 |
 | Backend | Python 3.12+ FastAPI (runs as sidecar, localhost:8008) |
-| PDF generation | Official Word templates (python-docx) + bundled dxpdf (LibreOffice/Word optional fallback) |
+| PDF generation | Official Word templates (lxml + zipfile) + bundled dxpdf (LibreOffice/Word optional fallback) |
 | Excel I/O | openpyxl |
 | **Node package manager** | **Bun** (not npm, not pnpm) |
 | Python package manager | uv |
@@ -29,7 +29,7 @@ bun run test:e2e:mock          # Playwright mock e2e (stubbed API)
 bun run test:e2e:integration   # Playwright + real FastAPI + fixtures
 
 uv sync              # install Python dependencies
-uv run pytest        # run Python tests (23)
+uv run pytest        # run Python tests
 uv run python src/backends/main.py  # start FastAPI backend
 ```
 
@@ -49,15 +49,15 @@ Tauri v2 (Rust) → React frontend (ui/src/) → HTTP localhost:8008 → FastAPI
 - `src/pipeline.py` — extracted pipeline orchestration
 - `certgen.py` — original CLI entry point (still works)
 - `ui/src/App.tsx` — 4-step wizard state machine
-- `.github/workflows/build.yml` — CI/CD for macOS/Windows/Linux
-- `.github/workflows/test-ui.yml` — Vitest + Playwright (mock + integration) on Ubuntu
+- `.github/workflows/test.yml` — pytest, ruff, cargo check, Vitest, Playwright (mock + integration)
+- `.github/workflows/build.yml` — sidecar + signed installers on main/tags (PRs skip Tauri)
 
 ## Rules
 
 - No `as any`, `@ts-ignore`, `@ts-expect-error` in TypeScript
 - No `# type: ignore` or bare `except:` in Python
 - Original Python modules in `src/parser/`, `src/matcher/`, `src/validator/` must not be modified
-- All 23 existing Python tests must pass
+- Existing Python tests must pass; do not drop coverage to hit a count
 
 ## Learned User Preferences
 

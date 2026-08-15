@@ -62,6 +62,9 @@ jobs:
         with:
           python-version: "3.12"
 
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
       # ── Version ─────────────────────────────────────────────────
       - name: Extract version
         id: version
@@ -82,7 +85,7 @@ jobs:
 
       # ── System dependencies ─────────────────────────────────────
       - name: Install Linux system deps
-        if: runner.os == 'Linux'
+        if: runner.os == 'Linux' && github.event_name != 'pull_request'
         timeout-minutes: 5
         run: |
           sudo apt-get update
@@ -98,27 +101,29 @@ jobs:
       - name: Install Python deps
         timeout-minutes: 5
         run: |
-          python -m pip install --upgrade pip
-          pip install pyinstaller pytest pytest-cov
-          pip install -e .
+          uv sync --frozen
+          uv pip install pyinstaller
 
       - name: Run pytest
+        if: github.event_name != 'pull_request'
         timeout-minutes: 5
-        run: python -m pytest
+        run: uv run pytest
 
       # ── Python sidecar ──────────────────────────────────────────
       - name: Build Python sidecar
         timeout-minutes: 10
         env:
           TARGET_TRIPLE: ${{ matrix.target }}
-        run: python build/build.py
+        run: uv run python build/build.py
 
       # ── Frontend ────────────────────────────────────────────────
       - name: Install frontend deps
+        if: github.event_name != 'pull_request'
         timeout-minutes: 5
         run: bun install --frozen-lockfile
 
       - name: Build frontend
+        if: github.event_name != 'pull_request'
         timeout-minutes: 5
         run: bun run build
 
@@ -158,13 +163,11 @@ jobs:
 
       # ── Tauri build ─────────────────────────────────────────────
       - name: Build Tauri
+        if: github.event_name != 'pull_request'
         timeout-minutes: 30
         # bash is required on Windows runners (default shell is PowerShell).
         shell: bash
         env:
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-          APPIMAGE_EXTRACT_AND_RUN: "1"
           # Apple secrets only on non-PR macOS builds (unsigned on PRs / other OSes).
           APPLE_CERTIFICATE: ${{ runner.os == 'macOS' && github.event_name != 'pull_request' && secrets.APPLE_CERTIFICATE || '' }}
           APPLE_CERTIFICATE_PASSWORD: ${{ runner.os == 'macOS' && github.event_name != 'pull_request' && secrets.APPLE_CERTIFICATE_PASSWORD || '' }}
@@ -184,7 +187,7 @@ jobs:
 
       # ── Verify artifacts ────────────────────────────────────────
       - name: Verify artifact exists
-        if: success()
+        if: success() && github.event_name != 'pull_request'
         shell: bash
         run: |
           echo "::group::Checking for ${{ matrix.ext }} artifact"
@@ -237,7 +240,7 @@ jobs:
 
       # ── Upload ──────────────────────────────────────────────────
       - name: Upload artifact
-        if: success()
+        if: success() && github.event_name != 'pull_request'
         uses: actions/upload-artifact@v4
         with:
           name: psych-cert-gen-${{ steps.version.outputs.version }}-${{ matrix.artifact-name }}

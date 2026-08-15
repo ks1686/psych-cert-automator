@@ -56,7 +56,7 @@ class CERequest:
     """Preferred email address."""
 
     ce_type: CEType
-    """CE type requested (e.g., 'APA', 'NASP', 'BCBA')."""
+    """CE type requested (e.g., 'APA', 'NASP', 'NY')."""
 
     license_number: str | None
     """License or certificate number, required by some CE types."""
@@ -205,6 +205,9 @@ class EligibilityStatus(StrEnum):
 
     EXCLUDED = "excluded"
     """User excluded this person from certificate generation."""
+
+    CE_TYPE_NOT_OFFERED = "ce_type_not_offered"
+    """Qualtrics CE type was not selected as offered for this session."""
 
 
 @dataclass(frozen=True, slots=True)

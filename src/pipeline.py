@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING, assert_never
 
 from src.generator.certificate import CertificateRenderOptions, generate_all
 from src.generator.report import generate_ineligibility_report
+from src.generator.templates import resolve_template_key
 from src.matcher.name_matcher import batch_match
 from src.models.certificate import (
     CERequest,
@@ -123,7 +124,7 @@ def run_pipeline(  # noqa: PLR0913
         session_end=end_time,
     )
 
-    _ = ce_types  # accepted for future cross-validation against Qualtrics types
+    offered_keys = _offered_template_keys(ce_types)
 
     try:
         # ── Steps 1-2: Parse reports ───────────────────────────────────────
@@ -155,63 +156,17 @@ def run_pipeline(  # noqa: PLR0913
             manual_overrides,
         )
 
-        # ── Steps 5-6: Validate & classify ─────────────────────────────────
-        session_start = zoom_session.session_start
-        session_end = zoom_session.session_end
-
-        eligible: list[CertificateOutput] = []
-        ineligible: list[IneligibilityEntry] = []
-
-        for request, participant, match_result in matches:
-            if request.name_on_certificate.strip() in skip_names:
-                ineligible.append(
-                    _make_ineligible(
-                        request,
-                        name_zoom=None,
-                        match_status="excluded",
-                        reason="Excluded from certificate generation",
-                        status=EligibilityStatus.EXCLUDED,
-                    )
-                )
-                continue
-
-            match match_result:
-                case MatchSuccess(matched_name=matched):
-                    _handle_matched(
-                        request,
-                        participant,
-                        matched,
-                        session_start,
-                        session_end,
-                        title,
-                        training_date,
-                        instructor,
-                        ce_credits,
-                        eligible,
-                        ineligible,
-                    )
-                case MatchAmbiguous(candidates=candidates):
-                    ineligible.append(
-                        _make_ineligible(
-                            request,
-                            name_zoom=", ".join(candidates),
-                            match_status="ambiguous",
-                            reason=f"Multiple Zoom matches: {', '.join(candidates)}",
-                            status=EligibilityStatus.NAME_MATCH_AMBIGUOUS,
-                        )
-                    )
-                case MatchNotFound():
-                    ineligible.append(
-                        _make_ineligible(
-                            request,
-                            name_zoom=None,
-                            match_status="not found",
-                            reason="Name not found in Zoom attendance",
-                            status=EligibilityStatus.NOT_FOUND_IN_ATTENDANCE,
-                        )
-                    )
-                case _:
-                    assert_never(match_result)
+        eligible, ineligible = _classify_requests(
+            matches,
+            skip_names=skip_names,
+            offered_keys=offered_keys,
+            session_start=zoom_session.session_start,
+            session_end=zoom_session.session_end,
+            title=title,
+            training_date=training_date,
+            instructor=instructor,
+            ce_credits=ce_credits,
+        )
 
         # ── Step 7: Generate certificates ──────────────────────────────────
         generated_paths: list[str] = []
@@ -253,6 +208,92 @@ def run_pipeline(  # noqa: PLR0913
 
 
 # ── Private helpers ─────────────────────────────────────────────────────────────────
+
+
+def _classify_requests(  # noqa: PLR0913
+    matches: list[tuple[CERequest, ParticipantAttendance | None, object]],
+    *,
+    skip_names: set[str],
+    offered_keys: set[str],
+    session_start: datetime,
+    session_end: datetime,
+    title: str,
+    training_date: date,
+    instructor: str,
+    ce_credits: int,
+) -> tuple[list[CertificateOutput], list[IneligibilityEntry]]:
+    eligible: list[CertificateOutput] = []
+    ineligible: list[IneligibilityEntry] = []
+    for request, participant, match_result in matches:
+        if request.name_on_certificate.strip() in skip_names:
+            ineligible.append(
+                _make_ineligible(
+                    request,
+                    name_zoom=None,
+                    match_status="excluded",
+                    reason="Excluded from certificate generation",
+                    status=EligibilityStatus.EXCLUDED,
+                )
+            )
+            continue
+        if _is_unoffered_specialty(request, offered_keys):
+            ineligible.append(
+                _make_ineligible(
+                    request,
+                    name_zoom=None,
+                    match_status="not offered",
+                    reason=f"CE type not offered: {request.ce_type}",
+                    status=EligibilityStatus.CE_TYPE_NOT_OFFERED,
+                )
+            )
+            continue
+        match match_result:
+            case MatchSuccess(matched_name=matched):
+                _handle_matched(
+                    request,
+                    participant,
+                    matched,
+                    session_start,
+                    session_end,
+                    title,
+                    training_date,
+                    instructor,
+                    ce_credits,
+                    eligible,
+                    ineligible,
+                )
+            case MatchAmbiguous(candidates=candidates):
+                ineligible.append(
+                    _make_ineligible(
+                        request,
+                        name_zoom=", ".join(candidates),
+                        match_status="ambiguous",
+                        reason=f"Multiple Zoom matches: {', '.join(candidates)}",
+                        status=EligibilityStatus.NAME_MATCH_AMBIGUOUS,
+                    )
+                )
+            case MatchNotFound():
+                ineligible.append(
+                    _make_ineligible(
+                        request,
+                        name_zoom=None,
+                        match_status="not found",
+                        reason="Name not found in Zoom attendance",
+                        status=EligibilityStatus.NOT_FOUND_IN_ATTENDANCE,
+                    )
+                )
+            case _:
+                assert_never(match_result)
+    return eligible, ineligible
+
+
+def _offered_template_keys(ce_types: list[str]) -> set[str]:
+    return {resolve_template_key(code) for code in ce_types if code.strip()}
+
+
+def _is_unoffered_specialty(request: CERequest, offered_keys: set[str]) -> bool:
+    request_key = resolve_template_key(str(request.ce_type))
+    return request_key in {"apa", "ny", "nasp"} and request_key not in offered_keys
 
 
 def _load_override_csv(filepath: str) -> dict[str, str]:

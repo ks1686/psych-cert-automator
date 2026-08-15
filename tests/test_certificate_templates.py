@@ -163,9 +163,11 @@ def test_generate_certificate_writes_filled_docx(tmp_path: Path) -> None:
     assert path.exists()
     # Soft-fail may leave .docx when PDF tools are missing.
     assert path.suffix.lower() in {".pdf", ".docx"}
-    docx = path if path.suffix.lower() == ".docx" else path.with_suffix(".docx")
-    assert docx.is_file()
-    with ZipFile(docx) as archive:
+    if path.suffix.lower() == ".pdf":
+        leftover = path.with_suffix(".docx")
+        assert not leftover.exists()
+        return
+    with ZipFile(path) as archive:
         xml = archive.read("word/document.xml").decode("utf-8")
     assert "Jamie Example" in xml
     assert "Sample Training" in xml
