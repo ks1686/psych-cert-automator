@@ -65,6 +65,17 @@ test("requires a location for in-person events", async () => {
   expect(screen.getByRole("button", { name: "Next" })).toBeEnabled();
 });
 
+test("explains session times are printed, not used for attendance", () => {
+  render(<StepMetadata onNext={vi.fn()} />);
+
+  expect(
+    screen.getByText(/printed on certificates/i),
+  ).toBeInTheDocument();
+  expect(
+    screen.getByText(/Zoom attendance report/i),
+  ).toBeInTheDocument();
+});
+
 test("offers APA, NASP, and NY CE types without BCBA", () => {
   render(<StepMetadata onNext={vi.fn()} />);
 

@@ -76,3 +76,7 @@ def test_session_create_and_list_persist_delivery_fields(
     assert saved["end_date"] == "2026-03-20"
     assert saved["is_virtual"] is False
     assert saved["location"] == "Rutgers University in Piscataway, NJ"
+    assert isinstance(saved["id"], str)
+    assert saved["id"] == Path(created["path"]).stem
+    assert saved["id"] != 0
+    assert Path(created["path"]).name != "multi_day_ethics.json"

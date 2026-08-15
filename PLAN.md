@@ -1,5 +1,7 @@
 # CE Certificate Generator — Project Plan
 
+> Historical CLI design notes. The shipped product is a Tauri desktop app with NY/APA/NASP + Certificate of Attendance templates and filenames `LastName_CECertificate_InstructorLastName_Date`. See `README.md` and `AGENTS.md`.
+
 ## Overview
 
 A Python CLI tool that takes a Zoom attendance report, a Qualtrics CE request export, and Word template files as input, validates attendance, and outputs individual PDF certificates per person per CE type — plus a summary report of ineligible participants.

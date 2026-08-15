@@ -2,7 +2,7 @@ use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
-use tauri::{Emitter, RunEvent};
+use tauri::{Emitter, Listener, RunEvent};
 use tauri_plugin_shell::process::{CommandChild, CommandEvent};
 use tauri_plugin_shell::ShellExt;
 
@@ -21,10 +21,14 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
-        .plugin(tauri_plugin_http::init())
         .setup(move |app| {
             let handle = app.handle().clone();
-            spawn_sidecar(app, &sidecar_for_setup, &handle);
+            spawn_sidecar(&handle, &sidecar_for_setup);
+            let retry_handle = handle.clone();
+            let retry_sidecar = sidecar_for_setup.clone();
+            let _ = handle.listen("retry-sidecar", move |_| {
+                respawn_sidecar(&retry_handle, &retry_sidecar);
+            });
             Ok(())
         })
         .build(tauri::generate_context!())
@@ -43,11 +47,14 @@ pub fn run() {
 
 /// Spawn the Python FastAPI sidecar, wire up stdout/stderr forwarding,
 /// and begin health-check polling.
-fn spawn_sidecar(
-    app: &tauri::App,
-    sidecar: &SidecarHandle,
-    handle: &tauri::AppHandle,
-) {
+fn respawn_sidecar(handle: &tauri::AppHandle, sidecar: &SidecarHandle) {
+    if let Some(child) = sidecar.lock().unwrap().take() {
+        let _ = child.kill();
+    }
+    spawn_sidecar(handle, sidecar);
+}
+
+fn spawn_sidecar(handle: &tauri::AppHandle, sidecar: &SidecarHandle) {
     // Resolve and spawn the sidecar binary declared in tauri.conf.json.
     //
     // NOTE: use the *basename* "psych-cert-gen", not "bin/api/psych-cert-gen".
@@ -60,7 +67,7 @@ fn spawn_sidecar(
     // does not exist in the bundle, so the sidecar never spawned and the
     // backend never started.
     eprintln!("[sidecar] resolving psych-cert-gen ...");
-    let mut rx = match app.shell().sidecar("psych-cert-gen") {
+    let mut rx = match handle.shell().sidecar("psych-cert-gen") {
         Ok(cmd) => match cmd.spawn() {
             Ok((rx, child)) => {
                 eprintln!("[sidecar] spawned OK, pid={:?}", child.pid());
@@ -171,7 +178,7 @@ async fn poll_health(handle: tauri::AppHandle, became_healthy: Arc<AtomicBool>) 
     const LOG_INTERVAL: std::time::Duration = std::time::Duration::from_secs(2);
 
     loop {
-        if start.elapsed() > timeout {
+        if !ready_emitted && start.elapsed() > timeout {
             let detail = last_error
                 .map(|e| format!(" Last connection error: {e}"))
                 .unwrap_or_default();

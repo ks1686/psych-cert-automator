@@ -56,7 +56,7 @@ uv run python certgen.py \
   --date "2026-03-20" \
   --instructor "Dr. Jane Smith" \
   --ce-credits 3 \
-  --ce-types "APA,NASP,BCBA" \
+  --ce-types "APA,NASP,NY" \
   --start-time "08:47" \
   --end-time "12:11" \
   --zoom-report "path/to/zoom_attendance.xlsx" \
@@ -105,10 +105,13 @@ bun run tauri dev
 ### Testing
 
 ```bash
-uv run pytest                    # Python unit tests (23)
+uv run pytest                    # Python tests
+bun run test:unit                # Vitest wizard unit tests
+bun run test:e2e:mock            # Playwright mock e2e (stubbed API)
+bun run test:e2e:integration     # Playwright + real FastAPI + fixtures
 bun run build                    # TypeScript type-check + Vite build
 cargo check --manifest-path src-tauri/Cargo.toml  # Rust compilation
-bun run test:e2e                 # Playwright e2e (requires Tauri running)
+# GitHub Actions: Test workflow on every PR/main push; full installers on main/tags
 ```
 
 ### Build for distribution

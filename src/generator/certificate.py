@@ -97,6 +97,10 @@ def generate_certificate(
 
     pdf_path = convert_docx_to_pdf(docx_path)
     if pdf_path is not None:
+        try:
+            docx_path.unlink(missing_ok=True)
+        except OSError:
+            logger.warning("Could not delete filled Word document %s", docx_path.name)
         return str(pdf_path.resolve())
 
     logger.warning(

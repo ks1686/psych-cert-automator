@@ -308,7 +308,6 @@ function WizardApp() {
           : "An unknown error occurred during matching.";
       toast.error("Matching failed", { description: message });
       setMatchError(message);
-      setTransitionPhase("idle");
     }
   }, []);
 
@@ -372,7 +371,10 @@ function WizardApp() {
               </Button>
               <Button
                 onClick={() => {
-                  goToStep3(wizardState.uploadData!);
+                  const upload = wizardState.uploadData;
+                  if (upload) {
+                    void goToStep3(upload);
+                  }
                 }}
               >
                 Retry

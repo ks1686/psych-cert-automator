@@ -17,10 +17,33 @@ from src.pipeline import PipelineResult, run_pipeline
 @click.option(
     "--ce-types",
     required=True,
-    help="Comma-separated CE types offered (e.g. APA,NASP,BCBA)",
+    help="Comma-separated CE types offered (e.g. APA,NASP,NY)",
 )
 @click.option("--start-time", required=True, help="Session start time (HH:MM)")
 @click.option("--end-time", required=True, help="Session end time (HH:MM)")
+@click.option(
+    "--end-date",
+    "end_date_str",
+    default=None,
+    help="Optional multi-day end date (YYYY-MM-DD)",
+)
+@click.option(
+    "--in-person",
+    is_flag=True,
+    default=False,
+    help="In-person event (default is virtual)",
+)
+@click.option(
+    "--location",
+    default=None,
+    help="In-person location (required with --in-person)",
+)
+@click.option(
+    "--exclude",
+    "excluded_names",
+    multiple=True,
+    help="Qualtrics certificate name to exclude (repeatable)",
+)
 @click.option("--zoom-report", type=click.Path(exists=True), required=True)
 @click.option("--qualtrics-report", type=click.Path(exists=True), required=True)
 @click.option("--output-dir", type=click.Path(), default="./output")
@@ -37,6 +60,10 @@ def main(  # noqa: PLR0913
     ce_types: str,
     start_time: str,
     end_time: str,
+    end_date_str: str | None,
+    in_person: bool,
+    location: str | None,
+    excluded_names: tuple[str, ...],
     zoom_report: str,
     qualtrics_report: str,
     output_dir: str,
@@ -51,8 +78,13 @@ def main(  # noqa: PLR0913
         training_date = date.fromisoformat(training_date_str)
         parsed_start = time.fromisoformat(start_time)
         parsed_end = time.fromisoformat(end_time)
+        parsed_end_date = date.fromisoformat(end_date_str) if end_date_str else None
     except ValueError as exc:
         click.echo(f"Error: invalid date/time format — {exc}", err=True)
+        sys.exit(1)
+
+    if in_person and not (location or "").strip():
+        click.echo("Error: --location is required with --in-person", err=True)
         sys.exit(1)
 
     ce_type_codes = [t.strip() for t in ce_types.split(",") if t.strip()]
@@ -73,6 +105,10 @@ def main(  # noqa: PLR0913
         end_time=parsed_end,
         overrides_path=manual_overrides,
         output_dir=output_dir,
+        excluded_names=set(excluded_names),
+        is_virtual=not in_person,
+        location=None if not in_person else location,
+        end_date=parsed_end_date,
     )
 
     # ── Handle errors ──────────────────────────────────────────────────────

@@ -28,3 +28,4 @@ def test_convert_docx_to_pdf_writes_sibling_pdf(tmp_path: Path) -> None:
     assert pdf_path == dest.with_suffix(".pdf")
     assert pdf_path.is_file()
     assert pdf_path.read_bytes()[:4] == b"%PDF"
+    # convert() itself may keep the source; generate_certificate deletes it.
