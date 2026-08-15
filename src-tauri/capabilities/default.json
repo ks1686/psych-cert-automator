@@ -9,19 +9,7 @@
     {
       "identifier": "opener:allow-open-path",
       "allow": [
-        { "path": "$HOME/**" },
-        { "path": "$DOWNLOAD/**" },
-        { "path": "$DESKTOP/**" },
-        { "path": "$DOCUMENT/**" }
-      ]
-    },
-    {
-      "identifier": "opener:allow-reveal-item-in-dir",
-      "allow": [
-        { "path": "$HOME/**" },
-        { "path": "$DOWNLOAD/**" },
-        { "path": "$DESKTOP/**" },
-        { "path": "$DOCUMENT/**" }
+        { "path": "$HOME/**" }
       ]
     },
     {
@@ -34,13 +22,6 @@
         }
       ]
     },
-    "dialog:default",
-    {
-      "identifier": "http:default",
-      "allow": [
-        { "url": "http://localhost:8008/**" },
-        { "url": "http://127.0.0.1:8008/**" }
-      ]
-    }
+    "dialog:default"
   ]
 }

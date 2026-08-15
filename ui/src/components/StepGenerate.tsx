@@ -6,8 +6,6 @@ import {
   Loader2,
   Download,
   Eye,
-  CheckCircle,
-  XCircle,
   RotateCcw,
   FileDown,
   FolderOpen,
@@ -22,7 +20,6 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import { Progress } from "@/components/ui/progress";
 import {
   Table,
   TableBody,
@@ -209,10 +206,7 @@ export default function StepGenerate({
 
   // ── Generation state ─────────────────────────────────────────────────────
 
-  const [progressPercent, setProgressPercent] = useState(0);
   const [progressLabel, setProgressLabel] = useState("");
-  const [successCount, setSuccessCount] = useState(0);
-  const [failureCount, setFailureCount] = useState(0);
   const [genError, setGenError] = useState<string | null>(null);
 
   // ── Results state ────────────────────────────────────────────────────────
@@ -314,10 +308,7 @@ export default function StepGenerate({
 
     setPhase("generating");
     setGenError(null);
-    setProgressPercent(10);
     setProgressLabel("Generating certificates…");
-    setSuccessCount(0);
-    setFailureCount(0);
     setCertificates([]);
     setIneligible([]);
     setConversionWarning(false);
@@ -369,9 +360,6 @@ export default function StepGenerate({
           : derivedIneligible,
       );
       setConversionWarning(payload.conversion_warning === true);
-      setSuccessCount(payload.certificates.length);
-      setFailureCount(payload.ineligible.length);
-      setProgressPercent(100);
       setProgressLabel("Generation complete");
       setPhase("complete");
     } catch (err) {
@@ -564,27 +552,7 @@ export default function StepGenerate({
 
             {/* Progress bar */}
             {phase === "generating" && (
-              <div className="space-y-2">
-                <div className="flex items-center justify-between text-sm">
-                  <span className="text-muted-foreground">
-                    {progressLabel}
-                  </span>
-                  <span className="tabular-nums font-medium">
-                    {progressPercent}%
-                  </span>
-                </div>
-                <Progress value={progressPercent} />
-                <div className="flex items-center gap-4 text-xs text-muted-foreground">
-                  <span className="inline-flex items-center gap-1">
-                    <CheckCircle className="h-3 w-3 text-green-600" />
-                    {successCount} succeeded
-                  </span>
-                  <span className="inline-flex items-center gap-1">
-                    <XCircle className="h-3 w-3 text-red-600" />
-                    {failureCount} failed
-                  </span>
-                </div>
-              </div>
+              <p className="text-sm text-muted-foreground">{progressLabel}</p>
             )}
           </div>
 

@@ -17,8 +17,7 @@ from pathlib import Path
 _PROJECT_ROOT = Path(SPECPATH).resolve().parent  # type: ignore[name-defined]  # noqa: F821
 
 # ──────────────────────────────────── Hidden imports ──────────────────────────────
-# Dependencies from pyproject.toml: openpyxl, fpdf2, pydantic, click, pyyaml
-# Plus runtime dependencies: uvicorn, fastapi, starlette, anyio, httpx, httpcore
+# Runtime deps: openpyxl, pydantic, click, uvicorn, fastapi, starlette, anyio, lxml, dxpdf
 
 _uvicorn_submodules = [
     "uvicorn.logging",
@@ -137,21 +136,6 @@ _openpyxl_modules = [
     "openpyxl.writer.excel",
 ]
 
-_fpdf_modules = [
-    "fpdf",
-    "fpdf.enums",
-    "fpdf.fonts",
-    "fpdf.html",
-    "fpdf.output",
-    "fpdf.template",
-    "fpdf.errors",
-    "fpdf.drawing",
-    "fpdf.line_break",
-    "fpdf.table",
-    "fpdf.syntax",
-    "fpdf.transitions",
-]
-
 _async_modules = [
     "anyio._backends._asyncio",
     "anyio._core._eventloop",
@@ -161,12 +145,6 @@ _async_modules = [
     "anyio._core._tasks",
     "anyio._core._testing",
     "anyio.streams",
-    "httpcore",
-    "httpcore._async",
-    "httpcore._sync",
-    "httpx",
-    "httpx._client",
-    "httpx._transports",
 ]
 
 _additional_modules = [
@@ -176,7 +154,8 @@ _additional_modules = [
     "click.decorators",
     "click.types",
     "click.utils",
-    "yaml",
+    "lxml",
+    "lxml.etree",
     "dxpdf",
 ]
 
@@ -186,10 +165,17 @@ _hidden_imports = (
     + _starlette_submodules
     + _pydantic_modules
     + _openpyxl_modules
-    + _fpdf_modules
     + _async_modules
     + _additional_modules
 )
+
+_templates_dir = _PROJECT_ROOT / "templates"
+_template_datas = [
+    (str(_templates_dir / "apa.docx"), "templates"),
+    (str(_templates_dir / "ny.docx"), "templates"),
+    (str(_templates_dir / "nasp.docx"), "templates"),
+    (str(_templates_dir / "attendance.docx"), "templates"),
+]
 
 # ──────────────────────────────────── Excludes ───────────────────────────────────
 _excludes = [
@@ -219,7 +205,7 @@ a = Analysis(
     [str(_PROJECT_ROOT / "src" / "backends" / "main.py")],
     pathex=[str(_PROJECT_ROOT)],
     binaries=[],
-    datas=[],
+    datas=_template_datas,
     hiddenimports=_hidden_imports,
     hookspath=[],
     hooksconfig={},

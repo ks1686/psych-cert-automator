@@ -32,7 +32,7 @@ export interface MetadataFormData {
 }
 
 interface SavedSession {
-  id: number;
+  id: string;
   title: string;
   date: string;
   end_date: string | null;
@@ -426,6 +426,11 @@ export default function StepMetadata({
         </div>
 
         {/* Start Time & End Time */}
+        <div className="space-y-2">
+          <p className="text-xs text-muted-foreground">
+            These times are printed on certificates. Attendance eligibility uses
+            the session window from the Zoom attendance report.
+          </p>
         <div className="grid grid-cols-2 gap-4">
           <div className="space-y-2">
             <Label htmlFor="startTime">Start Time</Label>
@@ -452,6 +457,7 @@ export default function StepMetadata({
               <p className="text-destructive text-sm">{errors.endTime}</p>
             )}
           </div>
+        </div>
         </div>
 
         {/* Saved Sessions List */}

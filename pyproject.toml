@@ -7,13 +7,9 @@ requires-python = ">=3.12"
 dependencies = [
     "click>=8.1",
     "fastapi>=0.115",
-    "fpdf2>=2.8.7",
-    "httpx>=0.28",
+    "lxml>=5.0",
     "openpyxl>=3.1",
-    "pillow>=12.3.0",
     "pydantic>=2.0",
-    "python-docx>=1.2.0",
-    "pyyaml>=6.0",
     "dxpdf>=0.5.1",
     "uvicorn[standard]>=0.34",
 ]
