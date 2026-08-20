@@ -24,6 +24,7 @@ export interface MetadataFormData {
     apa: boolean;
     nasp: boolean;
     ny: boolean;
+    nbcc: boolean;
   };
   startTime: string;
   endTime: string;
@@ -58,7 +59,7 @@ const EMPTY_FORM: MetadataFormData = {
   isMultiDay: false,
   instructor: "",
   ceCredits: 0,
-  ceTypes: { apa: false, nasp: false, ny: false },
+  ceTypes: { apa: false, nasp: false, ny: false, nbcc: false },
   startTime: "",
   endTime: "",
   isVirtual: true,
@@ -87,7 +88,12 @@ function validateFields(data: MetadataFormData): Record<string, string> {
   if (!Number.isFinite(data.ceCredits) || data.ceCredits < 1) {
     errors.ceCredits = "CE credits must be at least 1.";
   }
-  if (!data.ceTypes.apa && !data.ceTypes.nasp && !data.ceTypes.ny) {
+  if (
+    !data.ceTypes.apa &&
+    !data.ceTypes.nasp &&
+    !data.ceTypes.ny &&
+    !data.ceTypes.nbcc
+  ) {
     errors.ceTypes = "At least one CE type must be selected.";
   }
   if (!data.startTime) {
@@ -111,6 +117,7 @@ function ceTypesToString(ceTypes: MetadataFormData["ceTypes"]): string {
   if (ceTypes.apa) selected.push("APA");
   if (ceTypes.nasp) selected.push("NASP");
   if (ceTypes.ny) selected.push("NY");
+  if (ceTypes.nbcc) selected.push("NBCC");
   return selected.join(",");
 }
 
@@ -120,6 +127,7 @@ function parseCeTypes(typesStr: string): MetadataFormData["ceTypes"] {
     apa: parts.includes("APA"),
     nasp: parts.includes("NASP"),
     ny: parts.includes("NY"),
+    nbcc: parts.includes("NBCC"),
   };
 }
 
@@ -355,7 +363,7 @@ export default function StepMetadata({
           <Label>CE Types Offered</Label>
           <p className="text-xs text-muted-foreground">
             Certificate of Attendance is used automatically when a Qualtrics
-            request does not match NY, APA, or NASP.
+            request does not match NY, APA, NASP, or NBCC.
           </p>
           <div className="flex flex-wrap gap-6 pt-1">
             <div className="flex items-center gap-2">
@@ -386,6 +394,16 @@ export default function StepMetadata({
               />
               <Label htmlFor="ny" className="cursor-pointer font-normal">
                 NY
+              </Label>
+            </div>
+            <div className="flex items-center gap-2">
+              <Checkbox
+                id="nbcc"
+                checked={formData.ceTypes.nbcc}
+                onCheckedChange={(checked) => updateCeType("nbcc", checked)}
+              />
+              <Label htmlFor="nbcc" className="cursor-pointer font-normal">
+                NBCC
               </Label>
             </div>
           </div>

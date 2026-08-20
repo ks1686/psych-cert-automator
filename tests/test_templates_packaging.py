@@ -37,6 +37,7 @@ def test_pyinstaller_spec_bundles_templates_and_lxml() -> None:
     assert "datas=" in text
     assert "templates" in text
     assert "apa.docx" in text
+    assert "nbcc.docx" in text
     assert "lxml" in text
     assert '"fpdf"' not in text
     assert "'fpdf'" not in text

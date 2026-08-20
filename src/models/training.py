@@ -9,7 +9,7 @@ from typing import ClassVar, NewType, NotRequired, TypedDict, override
 from pydantic import BaseModel, ConfigDict
 
 CEType = NewType("CEType", str)
-"""Branded string type for CE type short codes (e.g., 'APA', 'NASP', 'NY')."""
+"""Branded string type for CE type short codes (e.g., 'APA', 'NASP', 'NY', 'NBCC')."""
 
 
 class TrainingConfigDict(TypedDict):
@@ -70,7 +70,7 @@ class TrainingMetadata(BaseModel):
     """Number of CE credits awarded for full attendance."""
 
     ce_types_offered: frozenset[CEType]
-    """Short codes for CE types offered (e.g., {'APA', 'NASP', 'NY'})."""
+    """Short codes for CE types offered (e.g., {'APA', 'NASP', 'NY', 'NBCC'})."""
 
     session_start: time
     """Session start time (local)."""
