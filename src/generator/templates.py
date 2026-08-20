@@ -12,7 +12,7 @@ from zipfile import ZIP_DEFLATED, ZipFile
 
 from lxml import etree
 
-TemplateKey = Literal["apa", "ny", "nasp", "attendance"]
+TemplateKey = Literal["apa", "ny", "nasp", "nbcc", "attendance"]
 
 _W_NS = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
 _XML_SPACE = "{http://www.w3.org/XML/1998/namespace}space"
@@ -27,6 +27,7 @@ _NY_RE = re.compile(
     re.IGNORECASE,
 )
 _NASP_RE = re.compile(r"\bNASP\b|school psychologist", re.IGNORECASE)
+_NBCC_RE = re.compile(r"\bNBCC\b|counselor", re.IGNORECASE)
 
 _DEFAULT_VIRTUAL_LOCATION = "Virtual Event"
 _DEFAULT_VIRTUAL_FORMAT = "Live Webinar"
@@ -68,8 +69,9 @@ def templates_dir() -> Path:
 def resolve_template_key(ce_type: str) -> TemplateKey:
     """Map a Qualtrics CE type string to a template key.
 
-    Known NY / APA / NASP signals get their dedicated template. Everything else
-    (including former BCBA requests) falls back to Certificate of Attendance.
+    Known NY / APA / NASP / NBCC (Counselor) signals get their dedicated
+    template. Everything else (including former BCBA requests) falls back to
+    Certificate of Attendance.
     """
     text = ce_type.strip()
     if not text:
@@ -80,6 +82,8 @@ def resolve_template_key(ce_type: str) -> TemplateKey:
         return "ny"
     if _NASP_RE.search(text):
         return "nasp"
+    if _NBCC_RE.search(text):
+        return "nbcc"
     return "attendance"
 
 
@@ -159,6 +163,16 @@ def build_replacements(key: TemplateKey, ctx: TemplateRenderContext) -> dict[str
             _NASP_DELIVERY_OPTIONS: delivery,
             "X continuing education": f"{credits} continuing education",
             "DATE": ctx.date_display,
+        }
+
+    if key == "nbcc":
+        return {
+            "NAME": name,
+            "TITLE": title,
+            "PROGRAM DATE:": f"PROGRAM DATE: {ctx.date_display}",
+            "CE CREDIT HOURS:": f"CE CREDIT HOURS: {credits}",
+            "LOCATION:": f"LOCATION: {location}",
+            "FORMAT:": f"FORMAT: {fmt}",
         }
 
     # attendance

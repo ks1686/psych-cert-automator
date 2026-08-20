@@ -27,7 +27,7 @@ const metadata: MetadataFormData = {
   isMultiDay: false,
   instructor: "Dr. Jane Smith",
   ceCredits: 3,
-  ceTypes: { apa: true, nasp: false, ny: false },
+  ceTypes: { apa: true, nasp: false, ny: false, nbcc: false },
   startTime: "09:00",
   endTime: "12:00",
   isVirtual: true,

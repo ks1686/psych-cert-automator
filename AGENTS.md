@@ -62,8 +62,8 @@ Tauri v2 (Rust) → React frontend (ui/src/) → HTTP localhost:8008 → FastAPI
 ## Learned User Preferences
 
 - Prefer filling official Word (`.docx`) CE templates (mail-merge) over the generic fpdf layout; PDF conversion uses bundled `dxpdf` and soft-fails to writing `.docx` with a warning if conversion fails
-- Supported CE types are NY, APA, NASP, and Certificate of Attendance; remove BCBA
-- Certificate of Attendance is the fallback when the Qualtrics CE type has no matching NY/APA/NASP template
+- Supported CE types are NY, APA, NASP, NBCC (Counselors), and Certificate of Attendance; remove BCBA
+- Certificate of Attendance is the fallback when the Qualtrics CE type has no matching NY/APA/NASP/NBCC template
 - Multi-day events should show a start–end date range on the certificate (single-date vs range may change later)
 - Keep event span (single-day vs multi-day) and delivery (virtual vs in-person) as separate controls; in-person shows a Location field, virtual locks the template’s virtual Location/Format strings
 - Auto-detect the Zoom host from the attendance report and pre-exclude them in Review Matches with an override checkbox
@@ -78,6 +78,6 @@ Tauri v2 (Rust) → React frontend (ui/src/) → HTTP localhost:8008 → FastAPI
 
 - GitHub remote is `ks1686/psych-cert-automator` (local workspace folder may be named `psych-cert-gen`)
 - FastAPI CORS must allow the Windows Tauri webview origin `http://tauri.localhost`
-- Official CE Word templates (APA, NY, NASP, Certificate of Attendance) are the source of truth for certificate layout and are intended to live under the project (e.g. `templates/`) rather than only in `~/Downloads`
+- Official CE Word templates (APA, NY, NASP, NBCC, Certificate of Attendance) are the source of truth for certificate layout and are intended to live under the project (e.g. `templates/`) rather than only in `~/Downloads`
 - Apple Developer Program is available; release signing/notarization uses Developer ID + App Store Connect API materials kept outside the repo (genv / `~/.appstoreconnect/`) — never commit `.p8`, `.p12`, or private keys
 - Tauri updater `TAURI_SIGNING_*` secrets are separate from Apple codesign/notarization; macOS builds were previously unsigned (`signingIdentity: null`)

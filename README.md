@@ -56,7 +56,7 @@ uv run python certgen.py \
   --date "2026-03-20" \
   --instructor "Dr. Jane Smith" \
   --ce-credits 3 \
-  --ce-types "APA,NASP,NY" \
+  --ce-types "APA,NASP,NY,NBCC" \
   --start-time "08:47" \
   --end-time "12:11" \
   --zoom-report "path/to/zoom_attendance.xlsx" \
