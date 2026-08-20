@@ -48,12 +48,15 @@ def test_resolve_template_key_maps_known_types() -> None:
     assert resolve_template_key("Psychologist (New York)") == "ny"
     assert resolve_template_key("NY") == "ny"
     assert resolve_template_key("NASP") == "nasp"
+    assert resolve_template_key("NBCC") == "nbcc"
+    assert resolve_template_key("Counselor") == "nbcc"
+    assert resolve_template_key("Counselor (NBCC)") == "nbcc"
     assert resolve_template_key("BCBA") == "attendance"
     assert resolve_template_key("Something Else") == "attendance"
 
 
 def test_template_files_exist() -> None:
-    for ce in ("APA", "NY", "NASP", "Other"):
+    for ce in ("APA", "NY", "NASP", "NBCC", "Other"):
         path = template_path_for(ce)
         assert path.is_file()
         assert path.suffix == ".docx"
@@ -285,6 +288,32 @@ def test_fill_nasp_preserves_inline_bold_and_strips_highlight(tmp_path: Path) ->
     assert school_bold
     highlights = root.xpath(".//w:highlight", namespaces=_NSMAP)
     assert highlights == []
+
+
+def test_fill_nbcc_writes_program_date_and_credit_hours(tmp_path: Path) -> None:
+    dest = tmp_path / "filled.docx"
+    ctx = TemplateRenderContext(
+        full_name="Jamie Example",
+        training_title="Ethics in School Psychology",
+        instructor_name="Dr. Jane Smith",
+        ce_credits=3,
+        license_number=None,
+        date_display="March 20, 2026",
+        time_display="9:00 AM – 12:00 PM",  # noqa: RUF001
+        is_virtual=True,
+        location=None,
+    )
+    fill_template(template_path_for("NBCC"), dest, build_replacements("nbcc", ctx))
+    with ZipFile(dest) as archive:
+        xml = archive.read("word/document.xml").decode("utf-8")
+    assert "Jamie Example" in xml
+    assert "Ethics in School Psychology" in xml
+    assert "PROGRAM DATE: March 20, 2026" in xml
+    assert "CE CREDIT HOURS: 3" in xml
+    assert "LOCATION: Virtual Event" in xml
+    assert "FORMAT: Live Webinar" in xml
+    assert ">NAME<" not in xml
+    assert ">TITLE<" not in xml
 
 
 def test_fill_attendance_strips_visible_hyperlink_field_text(tmp_path: Path) -> None:

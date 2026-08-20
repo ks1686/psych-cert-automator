@@ -56,7 +56,7 @@ class CERequest:
     """Preferred email address."""
 
     ce_type: CEType
-    """CE type requested (e.g., 'APA', 'NASP', 'NY')."""
+    """CE type requested (e.g., 'APA', 'NASP', 'NY', 'NBCC')."""
 
     license_number: str | None
     """License or certificate number, required by some CE types."""

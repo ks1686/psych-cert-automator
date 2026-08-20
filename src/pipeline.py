@@ -98,7 +98,7 @@ def run_pipeline(  # noqa: PLR0913
         training_date: Date the training occurred (or range start for multi-day).
         instructor: Instructor name.
         ce_credits: Number of CE credits awarded for full attendance.
-        ce_types: Short codes for CE types offered (e.g. ``['APA', 'NASP', 'NY']``).
+        ce_types: Short codes for CE types offered (e.g. ``['APA', 'NASP', 'NY', 'NBCC']``).
         start_time: Scheduled session start time.
         end_time: Scheduled session end time.
         overrides: Optional in-memory mapping from Qualtrics names to Zoom names.
@@ -293,7 +293,7 @@ def _offered_template_keys(ce_types: list[str]) -> set[str]:
 
 def _is_unoffered_specialty(request: CERequest, offered_keys: set[str]) -> bool:
     request_key = resolve_template_key(str(request.ce_type))
-    return request_key in {"apa", "ny", "nasp"} and request_key not in offered_keys
+    return request_key in {"apa", "ny", "nasp", "nbcc"} and request_key not in offered_keys
 
 
 def _load_override_csv(filepath: str) -> dict[str, str]:

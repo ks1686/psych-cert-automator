@@ -45,7 +45,7 @@ def test_unknown_qualtrics_type_still_gets_attendance(tmp_path: Path) -> None:
         training_date=date(2026, 3, 20),
         instructor="Dr. Jane Smith",
         ce_credits=3,
-        ce_types=["APA", "NASP", "NY"],
+        ce_types=["APA", "NASP", "NY", "NBCC"],
         start_time=time(8, 47),
         end_time=time(12, 11),
         output_dir=str(tmp_path),
