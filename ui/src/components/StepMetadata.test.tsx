@@ -13,7 +13,7 @@ const validMetadata: MetadataFormData = {
   isMultiDay: false,
   instructor: "Dr. Jane Smith",
   ceCredits: 3,
-  ceTypes: { apa: true, nasp: false, ny: false },
+  ceTypes: { apa: true, nasp: false, ny: false, nbcc: false },
   startTime: "09:00",
   endTime: "12:00",
   isVirtual: true,
@@ -76,12 +76,13 @@ test("explains session times are printed, not used for attendance", () => {
   ).toBeInTheDocument();
 });
 
-test("offers APA, NASP, and NY CE types without BCBA", () => {
+test("offers APA, NASP, NY, and NBCC CE types without BCBA", () => {
   render(<StepMetadata onNext={vi.fn()} />);
 
   expect(screen.getByRole("checkbox", { name: "APA" })).toBeInTheDocument();
   expect(screen.getByRole("checkbox", { name: "NASP" })).toBeInTheDocument();
   expect(screen.getByRole("checkbox", { name: "NY" })).toBeInTheDocument();
+  expect(screen.getByRole("checkbox", { name: "NBCC" })).toBeInTheDocument();
   expect(
     screen.queryByRole("checkbox", { name: /BCBA/i }),
   ).not.toBeInTheDocument();

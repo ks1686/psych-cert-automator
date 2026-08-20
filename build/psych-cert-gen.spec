@@ -174,6 +174,7 @@ _template_datas = [
     (str(_templates_dir / "apa.docx"), "templates"),
     (str(_templates_dir / "ny.docx"), "templates"),
     (str(_templates_dir / "nasp.docx"), "templates"),
+    (str(_templates_dir / "nbcc.docx"), "templates"),
     (str(_templates_dir / "attendance.docx"), "templates"),
 ]
 

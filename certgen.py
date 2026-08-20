@@ -17,7 +17,7 @@ from src.pipeline import PipelineResult, run_pipeline
 @click.option(
     "--ce-types",
     required=True,
-    help="Comma-separated CE types offered (e.g. APA,NASP,NY)",
+    help="Comma-separated CE types offered (e.g. APA,NASP,NY,NBCC)",
 )
 @click.option("--start-time", required=True, help="Session start time (HH:MM)")
 @click.option("--end-time", required=True, help="Session end time (HH:MM)")

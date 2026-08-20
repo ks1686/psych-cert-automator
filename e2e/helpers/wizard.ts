@@ -17,6 +17,7 @@ export interface Step1Overrides {
   apa?: boolean;
   nasp?: boolean;
   ny?: boolean;
+  nbcc?: boolean;
 }
 
 const DEFAULT_STEP1 = {
@@ -29,6 +30,7 @@ const DEFAULT_STEP1 = {
   apa: true,
   nasp: false,
   ny: false,
+  nbcc: false,
 } as const;
 
 /** Fill Step 1 with a valid virtual single-day session. Does not click Next. */
@@ -48,6 +50,7 @@ export async function fillStep1Valid(
   await setCheckbox(page, "#apa", data.apa);
   await setCheckbox(page, "#nasp", data.nasp);
   await setCheckbox(page, "#ny", data.ny);
+  await setCheckbox(page, "#nbcc", data.nbcc);
 }
 
 async function setCheckbox(

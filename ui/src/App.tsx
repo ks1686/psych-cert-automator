@@ -49,6 +49,7 @@ function deriveTrainingMetadata(
   if (metadata.ceTypes.apa) ceTypes.push("APA");
   if (metadata.ceTypes.nasp) ceTypes.push("NASP");
   if (metadata.ceTypes.ny) ceTypes.push("NY");
+  if (metadata.ceTypes.nbcc) ceTypes.push("NBCC");
 
   return {
     title: metadata.title,
