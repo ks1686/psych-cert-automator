@@ -6,16 +6,16 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc && vite build",
+    "build": "bunx tsc && bunx vite build",
     "preview": "vite preview",
     "tauri": "tauri",
     "test:unit": "vitest run",
     "test:unit:watch": "vitest",
     "test:unit:coverage": "vitest run --coverage",
     "test:e2e": "bun run test:e2e:mock",
-    "test:e2e:mock": "playwright test --config=e2e/playwright.mock.config.ts",
-    "test:e2e:integration": "playwright test --config=e2e/playwright.integration.config.ts",
-    "test:e2e:tauri": "playwright test --config=e2e/playwright.config.ts"
+    "test:e2e:mock": "bunx playwright test --config=e2e/playwright.mock.config.ts",
+    "test:e2e:integration": "bunx playwright test --config=e2e/playwright.integration.config.ts",
+    "test:e2e:tauri": "bunx playwright test --config=e2e/playwright.config.ts"
   },
   "dependencies": {
     "@radix-ui/react-checkbox": "^1.3.5",
