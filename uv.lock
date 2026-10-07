@@ -1,5 +1,5 @@
 version = 1
-revision = 3
+revision = 5
 requires-python = ">=3.12"
 
 [[package]]
@@ -364,7 +364,7 @@ wheels = [
 
 [[package]]
 name = "psych-cert-gen"
-version = "0.2.8"
+version = "0.2.9"
 source = { virtual = "." }
 dependencies = [
     { name = "click" },

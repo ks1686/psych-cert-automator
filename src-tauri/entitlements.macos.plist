@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<!--
+  The PyInstaller sidecar unpacks Python.framework at runtime. That framework
+  is signed by a different Team ID than the Developer ID sidecar. Hardened
+  runtime then refuses dlopen. This entitlement is what lets the backend start.
+-->
+<dict>
+  <key>com.apple.security.cs.disable-library-validation</key>
+  <true/>
+</dict>
+</plist>

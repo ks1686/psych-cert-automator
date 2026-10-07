@@ -233,6 +233,45 @@ jobs:
           spctl --assess --type execute --verbose=2 "$APP_PATH"
           xcrun stapler validate "$APP_PATH"
           echo "::endgroup::"
+          SIDECAR="${APP_PATH}/Contents/MacOS/psych-cert-gen"
+          if [[ ! -x "$SIDECAR" ]]; then
+            echo "Missing sidecar binary: $SIDECAR" >&2
+            exit 1
+          fi
+          echo "::group::sidecar entitlements"
+          codesign -d --entitlements - "$SIDECAR"
+          echo "::endgroup::"
+          if ! codesign -d --entitlements - "$SIDECAR" 2>&1 | grep -q "disable-library-validation"; then
+            echo "Sidecar is missing com.apple.security.cs.disable-library-validation" >&2
+            exit 1
+          fi
+          # v0.2.8 launched the app and then the sidecar exited immediately:
+          # hardened runtime rejected Python.framework (different Team ID).
+          SIDE_ERR="${RUNNER_TEMP}/sidecar-stderr.txt"
+          "$SIDECAR" >"${RUNNER_TEMP}/sidecar-stdout.txt" 2>"$SIDE_ERR" &
+          SIDE_PID=$!
+          cleanup_side() { kill "$SIDE_PID" 2>/dev/null || true; }
+          trap 'cleanup_side; cleanup' EXIT
+          ready=0
+          for _ in $(seq 1 45); do
+            if curl -fsS http://127.0.0.1:8008/health; then
+              ready=1
+              break
+            fi
+            if ! kill -0 "$SIDE_PID" 2>/dev/null; then
+              echo "Sidecar exited before /health" >&2
+              cat "$SIDE_ERR" >&2 || true
+              exit 1
+            fi
+            sleep 1
+          done
+          if [[ "$ready" -ne 1 ]]; then
+            echo "Sidecar /health timed out" >&2
+            cat "$SIDE_ERR" >&2 || true
+            exit 1
+          fi
+          curl -fsS -X POST http://127.0.0.1:8008/shutdown || true
+          wait "$SIDE_PID" || true
           if ! codesign -dv --verbose=2 "$APP_PATH" 2>&1 | grep -q "Developer ID Application"; then
             echo "App is not signed with Developer ID Application" >&2
             exit 1
