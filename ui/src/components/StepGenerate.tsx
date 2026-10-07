@@ -92,7 +92,26 @@ interface StepGenerateProps {
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
-function resolveEligibleEntries(matchData: MatchData): EligibleEntry[] {
+function templateKey(ceType: string): "apa" | "ny" | "nasp" | "nbcc" | "attendance" {
+  const text = ceType.trim();
+  if (!text) return "attendance";
+  if (/\bAPA\b|psychologist\s*\(\s*APA\s*\)/i.test(text)) return "apa";
+  if (/\bNY\b|New York|psychologist\s*\(\s*New York\s*\)/i.test(text)) return "ny";
+  if (/\bNASP\b|school psychologist/i.test(text)) return "nasp";
+  if (/\bNBCC\b|counselor/i.test(text)) return "nbcc";
+  return "attendance";
+}
+
+function isUnofferedSpecialty(ceType: string, offered: readonly string[]): boolean {
+  const key = templateKey(ceType);
+  if (key === "attendance") return false;
+  return !offered.some((code) => templateKey(code) === key);
+}
+
+function resolveEligibleEntries(
+  matchData: MatchData,
+  offered: readonly string[],
+): EligibleEntry[] {
   const entries: EligibleEntry[] = [];
   const excluded = new Set(matchData.excludedNames);
 
@@ -108,6 +127,7 @@ function resolveEligibleEntries(matchData: MatchData): EligibleEntry[] {
     );
 
     for (const req of matchingRequests) {
+      if (isUnofferedSpecialty(req.ce_type, offered)) continue;
       entries.push({
         qualtrics_name: match.qualtrics_name,
         zoom_name: match.zoom_name ?? match.qualtrics_name,
@@ -184,8 +204,8 @@ export default function StepGenerate({
   // ── Derived data ────────────────────────────────────────────────────────
 
   const eligibleEntries = useMemo(
-    () => resolveEligibleEntries(matchData),
-    [matchData],
+    () => resolveEligibleEntries(matchData, trainingMetadata.ce_types_offered),
+    [matchData, trainingMetadata.ce_types_offered],
   );
 
   const derivedIneligible = useMemo(
@@ -245,6 +265,7 @@ export default function StepGenerate({
 
   const handleOpenFolder = useCallback(async () => {
     if (!outputDir) return;
+    setGenError(null);
     try {
       await openPath(outputDir);
     } catch {

@@ -283,6 +283,11 @@ async def parse_endpoint(request: ParseRequest) -> ParseResponse:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except zipfile.BadZipFile as exc:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Could not read spreadsheet: {exc}",
+        ) from exc
 
     participants = [
         ParseParticipant(

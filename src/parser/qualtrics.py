@@ -228,7 +228,7 @@ def _parse_row(
         case _ColumnLayout(main_ce_col=int(ce_col)) if ce_col >= 0:
             raw_ce = _cell_str(row_values[ce_col])
             if raw_ce:
-                yield from _from_selection(name, email, raw_ce, layout)
+                yield from _from_selection(name, email, raw_ce, layout, row_values)
         case _ColumnLayout(ce_checkbox_cols=cols) if cols:
             yield from _from_checkboxes(name, email, row_values, cols, layout)
         case _:
@@ -240,10 +240,11 @@ def _from_selection(
     email: str | None,
     raw_ce: str,
     layout: _ColumnLayout,
+    row_values: list[object],
 ) -> Iterator[CERequest]:
     """Yield CERequests from a single/multi-select CE dropdown value."""
     for ce_name in _split_ce_types(raw_ce):
-        license_number = _lookup_license(ce_name, layout.license_cols, None)
+        license_number = _lookup_license(ce_name, layout.license_cols, row_values)
         yield CERequest(
             name_on_certificate=name,
             email=email,
