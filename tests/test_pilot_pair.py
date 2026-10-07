@@ -7,6 +7,7 @@ import subprocess
 from datetime import date, time
 from pathlib import Path
 
+import pytest
 from src.generator.templates import format_training_date, resolve_template_key
 from src.generator.zoom_host import extract_zoom_host
 from src.models.certificate import EligibilityStatus
@@ -49,8 +50,7 @@ def _run(
 def _pdf_text(path: Path) -> str:
     executable = shutil.which("pdftotext")
     if executable is None:
-        msg = "pdftotext is required to read generated certificates"
-        raise RuntimeError(msg)
+        pytest.skip("pdftotext is not installed")
     completed = subprocess.run(  # noqa: S603
         [executable, "-layout", str(path), "-"],
         check=True,
