@@ -32,6 +32,9 @@ jobs:
       - name: Install Python deps
         run: uv sync --frozen
 
+      - name: Install poppler
+        run: sudo apt-get update && sudo apt-get install -y poppler-utils
+
       - name: Ruff
         run: >-
           uv run ruff check
@@ -149,6 +152,9 @@ jobs:
 
       - name: Install Playwright Chromium
         run: bunx playwright install chromium --with-deps
+
+      - name: Install poppler
+        run: sudo apt-get update && sudo apt-get install -y poppler-utils
 
       - name: Integration e2e
         run: bun run test:e2e:integration

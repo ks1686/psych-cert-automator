@@ -48,6 +48,7 @@ export function PdfPreview({ pdfBytes }: PdfPreviewProps) {
   const [status, setStatus] = useState<"loading" | "error" | "empty" | "ready">(
     "loading",
   );
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   useEffect(() => {
     if (!pdfBytes || pdfBytes.length === 0) {
@@ -62,7 +63,9 @@ export function PdfPreview({ pdfBytes }: PdfPreviewProps) {
     (async () => {
       try {
         const pdfJs = await ensurePdfJs();
-        const pdf = await pdfJs.getDocument({ data: pdfBytes }).promise;
+        // pdf.js transfers this buffer to its worker. Copy first so a remount
+        // (React strict mode, or opening preview again) still has the bytes.
+        const pdf = await pdfJs.getDocument({ data: pdfBytes.slice() }).promise;
         const page = await pdf.getPage(1);
         const canvas = canvasRef.current;
         if (!canvas || cancelled) return;
@@ -76,8 +79,11 @@ export function PdfPreview({ pdfBytes }: PdfPreviewProps) {
         if (!ctx) throw new Error("Canvas 2D context unavailable");
         await page.render({ canvasContext: ctx, viewport }).promise;
         if (!cancelled) setStatus("ready");
-      } catch {
-        if (!cancelled) setStatus("error");
+      } catch (err) {
+        if (!cancelled) {
+          setErrorMessage(err instanceof Error ? err.message : "Preview failed");
+          setStatus("error");
+        }
       }
     })();
 
@@ -98,6 +104,7 @@ export function PdfPreview({ pdfBytes }: PdfPreviewProps) {
     return (
       <div className="flex items-center justify-center p-8 text-destructive text-sm">
         Failed to render preview
+        {errorMessage ? `: ${errorMessage}` : ""}
       </div>
     );
   }
@@ -123,15 +130,22 @@ export function PdfPreview({ pdfBytes }: PdfPreviewProps) {
 
 function loadScript(src: string): Promise<void> {
   return new Promise((resolve, reject) => {
+    const finish = () => resolve();
+    const fail = () => reject(new Error(`Failed to load ${src}`));
     const existing = document.querySelector(`script[src="${src}"]`);
     if (existing) {
-      resolve();
+      if (window.pdfjsLib) {
+        finish();
+        return;
+      }
+      existing.addEventListener("load", finish, { once: true });
+      existing.addEventListener("error", fail, { once: true });
       return;
     }
     const script = document.createElement("script");
     script.src = src;
-    script.onload = () => resolve();
-    script.onerror = () => reject(new Error(`Failed to load ${src}`));
+    script.onload = finish;
+    script.onerror = fail;
     document.head.appendChild(script);
   });
 }

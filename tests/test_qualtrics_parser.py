@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+from openpyxl import Workbook
 from src.parser.qualtrics import parse_qualtrics_export
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -37,3 +38,32 @@ def test_extracts_name_and_email() -> None:
     jessica = next(r for r in requests if r.name_on_certificate == "Jessica Benas")
     assert jessica.name_on_certificate == "Jessica Benas"
     assert jessica.email == "jbenas@gsapp.rutgers.edu"
+
+
+def test_dropdown_export_keeps_license_number(tmp_path: Path) -> None:
+    """The GSAPP export puts the NY license in its own text column."""
+    path = tmp_path / "qualtrics.xlsx"
+    book = Workbook()
+    sheet = book.active
+    sheet.append(
+        [
+            "Name (as you would like it to appear on your CE certificate):",
+            "Preferred email address:",
+            "Type of CE credit needed: - Selected Choice",
+            "Type of CE credit needed: - Psychologist (New York) (please enter license #) - Text",
+        ]
+    )
+    sheet.append(
+        [
+            "Riley Okonkwo",
+            "riley.okonkwo@example.com",
+            "Psychologist (New York)",
+            "012345",
+        ]
+    )
+    book.save(path)
+    book.close()
+
+    requests = parse_qualtrics_export(str(path))
+    assert len(requests) == 1
+    assert requests[0].license_number == "012345"

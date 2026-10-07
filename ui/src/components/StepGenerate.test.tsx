@@ -181,6 +181,43 @@ test("shows Generate Again after a successful generation", async () => {
   ).toBeEnabled();
 });
 
+test("counts only offered CE types, and still counts attendance", () => {
+  const { unmount } = render(
+    <StepGenerate
+      onBack={vi.fn()}
+      onReset={vi.fn()}
+      matchData={matchData}
+      trainingMetadata={{ ...trainingMetadata, ce_types_offered: ["NASP"] }}
+      uploadData={uploadData}
+    />,
+  );
+  expect(
+    screen.getByText("No eligible certificates found. All participants are ineligible."),
+  ).toBeInTheDocument();
+  unmount();
+
+  render(
+    <StepGenerate
+      onBack={vi.fn()}
+      onReset={vi.fn()}
+      matchData={{
+        ...matchData,
+        ceRequests: [
+          {
+            name_on_certificate: "Alex Rivera",
+            email: "alex@example.com",
+            ce_type: "Certificate of Attendance",
+            license_number: null,
+          },
+        ],
+      }}
+      trainingMetadata={{ ...trainingMetadata, ce_types_offered: ["NASP"] }}
+      uploadData={uploadData}
+    />,
+  );
+  expect(screen.getByText("1 eligible certificate ready to generate.")).toBeInTheDocument();
+});
+
 test("surfaces generation HTTP errors instead of empty success", async () => {
   const user = userEvent.setup();
   const fetchMock = vi.fn().mockResolvedValue(

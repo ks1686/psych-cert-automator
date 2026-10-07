@@ -281,6 +281,21 @@ def test_excluded_status_label() -> None:
     assert _result_status("ce_type_not_offered") == "Not Offered"
 
 
+def test_parse_endpoint_rejects_a_file_that_is_not_a_workbook(tmp_path: Path) -> None:
+    bad = tmp_path / "not-zoom.xlsx"
+    bad.write_text("this is not a workbook", encoding="utf-8")
+    request = ParseRequest.model_validate(
+        {
+            "zoom_path": str(bad),
+            "qualtrics_path": "tests/fixtures/sample_qualtrics.xlsx",
+        },
+    )
+    with pytest.raises(HTTPException) as exc_info:
+        _ = asyncio.run(parse_endpoint(request))
+    assert exc_info.value.status_code == 400
+    assert "spreadsheet" in str(exc_info.value.detail).lower()
+
+
 def test_parse_endpoint_returns_host_and_counts() -> None:
     request = ParseRequest.model_validate(
         {
