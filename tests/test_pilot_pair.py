@@ -52,10 +52,13 @@ def _pdf_text(path: Path) -> str:
     if executable is None:
         pytest.skip("pdftotext is not installed")
     completed = subprocess.run(  # noqa: S603
-        [executable, "-layout", str(path), "-"],
+        [executable, "-layout", "-enc", "UTF-8", str(path), "-"],
         check=True,
         capture_output=True,
         text=True,
+        # pdftotext writes UTF-8. Without this, Windows decodes with cp1252 and
+        # the en dash in a multi-day date becomes a different character.
+        encoding="utf-8",
     )
     return completed.stdout
 
