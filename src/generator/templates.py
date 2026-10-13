@@ -137,9 +137,11 @@ def build_replacements(key: TemplateKey, ctx: TemplateRenderContext) -> dict[str
         }
 
     if key == "ny":
-        license_line = "NY Psychology License #"
-        if license_value:
-            license_line = f"NY Psychology License # {license_value}"
+        # A missing license is optional. Leave the line blank instead of an
+        # unfilled "NY Psychology License #" label.
+        license_line = (
+            f"NY Psychology License # {license_value}" if license_value else ""
+        )
         return {
             "NAME": name,
             "NY Psychology License #": license_line,
