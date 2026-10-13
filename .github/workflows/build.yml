@@ -96,7 +96,9 @@ jobs:
             libjavascriptcoregtk-4.1-dev \
             libsoup-3.0-dev \
             libfuse2 \
-            poppler-utils
+            poppler-utils \
+            fonts-croscore \
+            fonts-noto-core
 
       # ── Python deps + tests ─────────────────────────────────────
       - name: Install Python deps

@@ -138,7 +138,7 @@ cargo check --manifest-path src-tauri/Cargo.toml
 UPDATE_CERTIFICATE_GOLDENS=1 uv run pytest tests/test_certificate_layout.py
 ```
 
-The Test workflow on Ubuntu 24.04 installs poppler and runs pytest. Golden images are tied to poppler 24.02. A different poppler build can fail the 0.1 percent pixel threshold even when the PDF is unchanged.
+The Test workflow on Ubuntu 24.04 installs poppler, `fonts-croscore`, and `fonts-noto-core`, then runs pytest. `tests/conftest.py` points fontconfig at `tests/fixtures/fontconfig/fonts.conf` so Californian FB becomes Tinos and Arial Unicode MS uses Ubuntu's Noto Sans file. Golden images are tied to poppler 24.02 and those font packages. A different poppler build or a different Noto Sans file can fail the 0.1 percent pixel threshold even when the wording is unchanged.
 
 ### Installers
 

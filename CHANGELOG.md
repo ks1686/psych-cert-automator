@@ -13,4 +13,4 @@ First stable release of the certificate generator. The desktop app, CLI, and tem
 ### Added
 
 - Layout checks for APA, NY, NASP, NBCC, and Certificate of Attendance, including long names, accents, apostrophes, hyphens, a missing NY license, and in-person locations.
-- Golden PNG fixtures rendered with pdftoppm at 96 DPI. A later render must stay within 0.1 percent of those pixels. Poppler 24.02 on Ubuntu 24.04 is the raster used for the fixtures.
+- Golden PNG fixtures rendered with pdftoppm at 96 DPI. A later render must stay within 0.1 percent of those pixels. Poppler 24.02 on Ubuntu 24.04 is the raster used for the fixtures. Tests pin Californian FB to Tinos and Arial Unicode MS to Ubuntu's Noto Sans so the pixels do not follow whichever fonts happen to be installed.
