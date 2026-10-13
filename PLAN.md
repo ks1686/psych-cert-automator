@@ -1,6 +1,6 @@
 # CE Certificate Generator — Project Plan
 
-> Historical CLI design notes. The shipped product is a Tauri desktop app with NY/APA/NASP + Certificate of Attendance templates and filenames `LastName_CECertificate_InstructorLastName_Date`. See `README.md` and `AGENTS.md`.
+> Historical CLI design notes. The shipped product is a Tauri desktop app with NY, APA, NASP, NBCC, and Certificate of Attendance templates and filenames `LastName_CECertificate_InstructorLastName_Date`. See `README.md` and `AGENTS.md`. The sections below are not the current spec.
 
 ## Overview
 
