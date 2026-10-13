@@ -316,13 +316,26 @@ def test_fill_nbcc_writes_program_date_and_credit_hours(tmp_path: Path) -> None:
     assert ">TITLE<" not in xml
 
 
-def test_fill_attendance_strips_visible_hyperlink_field_text(tmp_path: Path) -> None:
+def test_strip_visible_hyperlink_field_text() -> None:
+    raw = (
+        b'<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        b'<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
+        b"<w:body><w:p><w:r><w:t> HYPERLINK &quot;mailto:ada@example.com&quot; </w:t></w:r>"
+        b"<w:r><w:t>ada@example.com</w:t></w:r></w:p></w:body></w:document>"
+    )
+    updated = etree.fromstring(_replace_in_xml(raw, []))
+    xml = etree.tostring(updated, encoding="unicode")
+    assert "HYPERLINK" not in xml
+    assert "ada@example.com" in xml
+
+
+def test_fill_attendance_puts_name_in_the_certify_line(tmp_path: Path) -> None:
     dest = tmp_path / "filled.docx"
     fill_template(
         template_path_for("Certificate of Attendance"),
         dest,
         {
-            "NAME": "Sasan Haghani",
+            "NAME": "Quinn Alvarez",
             "TITLE": "Ethics in School Psychology",
             "DATE:": "DATE: March 20, 2026",
             "TIME:": "TIME: 9:00 AM - 12:00 PM",
@@ -330,7 +343,33 @@ def test_fill_attendance_strips_visible_hyperlink_field_text(tmp_path: Path) -> 
             "Format: Live Webinar": "Format: Live Webinar",
         },
     )
-    with ZipFile(dest) as archive:
-        xml = archive.read("word/document.xml").decode()
-    assert "HYPERLINK" not in xml
-    assert "jbenas@rutgers.edu" in xml
+    texts = _leaf_paragraph_texts(dest)
+    certify = texts.index("This is to certify that")
+    assert texts[certify + 1] == "Quinn Alvarez"
+    assert texts[certify + 2].startswith("attended, in its entirety")
+    joined = "\n".join(texts)
+    assert "HYPERLINK" not in joined
+    assert "jbenas@rutgers.edu" in joined
+    assert "Gordon" not in joined
+    assert "nj-charactered" not in joined
+    assert "445-2000" in joined
+    assert "445-7970" in joined
+
+
+def test_ny_omits_license_label_when_number_missing(tmp_path: Path) -> None:
+    dest = tmp_path / "filled.docx"
+    ctx = TemplateRenderContext(
+        full_name="Renée Chloé D'Amico",
+        training_title="Short Title",
+        instructor_name="Dr. Amira Solano",
+        ce_credits=3,
+        license_number=None,
+        date_display="October 6, 2026",
+        time_display="9:00 AM - 12:00 PM",
+        is_virtual=True,
+        location=None,
+    )
+    fill_template(template_path_for("NY"), dest, build_replacements("ny", ctx))
+    texts = _leaf_paragraph_texts(dest)
+    assert "Renée Chloé D'Amico" in texts
+    assert all("NY Psychology License" not in text for text in texts)
