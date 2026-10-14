@@ -95,7 +95,10 @@ jobs:
             libayatana-appindicator3-dev \
             libjavascriptcoregtk-4.1-dev \
             libsoup-3.0-dev \
-            libfuse2
+            libfuse2 \
+            poppler-utils \
+            fonts-croscore \
+            fonts-noto-core
 
       # ── Python deps + tests ─────────────────────────────────────
       - name: Install Python deps

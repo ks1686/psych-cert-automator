@@ -3,54 +3,68 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Latest release](https://img.shields.io/github/v/release/ks1686/psych-cert-automator)](https://github.com/ks1686/psych-cert-automator/releases/latest)
 
-**Turns your Zoom attendance and Qualtrics survey into individual CE certificates — automatically.**
+Turns a Zoom attendance report and a Qualtrics CE survey into one certificate per eligible person and CE type.
 
-Built for the GSAPP Psychology Department at Rutgers. Desktop installers for macOS, Windows, and Linux — no Python required for end users.
-
----
+Built for the GSAPP Psychology Department at Rutgers. Desktop installers are published for macOS, Windows, and Linux. People who use the installer do not need Python.
 
 ## What it does
 
-1. Reads your Zoom attendance report (who showed up, when they joined/left)
-2. Reads your Qualtrics CE request survey (who wants which CE credits)
-3. Matches people across both files by name
-4. Checks that each person attended the full session (no more than 15 minutes missed)
-5. Generates a professional PDF certificate for each eligible person, per CE type
-6. Produces a summary spreadsheet of anyone who was skipped and why
+1. Reads a Zoom attendance workbook (who joined, when they left, and who the host was).
+2. Reads a Qualtrics CE request export (name, email, requested CE type, and an optional NY license number).
+3. Matches people across the two files by name.
+4. Keeps a request when late arrival, early departure, and total time missed (including mid-session gaps) are each 15 minutes or less. Waiting-room rows are ignored.
+5. Fills the official Word template for that CE type and writes a PDF.
+6. Writes `ineligibility_report.xlsx` for anyone who was skipped, with the reason.
 
-**What used to take hours of manual work now takes seconds.**
+The Zoom host is pre-excluded and can be included again from Review Matches. Any other row can be excluded with its own checkbox. The same names can be passed to the CLI with repeatable `--exclude`.
 
----
+Deleting the output files and running again creates a fresh set of certificates.
 
-## Desktop App (recommended)
+## Certificate types
+
+| Requested type | Template | Page |
+| --- | --- | --- |
+| APA, or psychologist (APA) | `templates/apa.docx` | US Letter, landscape |
+| NY, New York, or psychologist (New York) | `templates/ny.docx` | US Letter, landscape |
+| NASP, or school psychologist | `templates/nasp.docx` | US Letter, portrait |
+| NBCC, or counselor | `templates/nbcc.docx` | US Letter, landscape |
+| Anything else, including a former BCBA request | `templates/attendance.docx` | US Letter, portrait |
+
+Certificate of Attendance is the fallback when the Qualtrics choice does not match NY, APA, NASP, or NBCC. The desktop wizard offers APA, NASP, NY, and NBCC. Attendance is selected automatically.
+
+Virtual events keep the template's virtual location and format. NASP virtual certificates say "via Live Zoom Webinar". In-person events print the location you enter, and NASP says "at {location}". A multi-day event with an end date prints a start and end date on the certificate.
+
+Each file is named `LastName_CECertificate_InstructorLastName_M.D.YY.pdf` (for example `Chen_CECertificate_Solano_10.6.26.pdf`). If two certificates would share that name, the first name is added, then the CE type, then a number. Characters that are unsafe in a filename, including accents, are replaced in the file name. The name printed on the certificate keeps accents, apostrophes, and hyphens.
+
+PDF conversion uses the bundled `dxpdf` converter. LibreOffice and Microsoft Word are optional fallbacks. If conversion fails, the filled `.docx` is kept and a warning is logged. Template fonts such as Californian FB, Calibri, and Times are not embedded in the Word files. `dxpdf` substitutes and embeds Arimo, Tinos, and Noto Sans. That substitution is the look these tests lock in.
+
+The CLI writes files into `--output-dir` and does not build a zip. The desktop app and `POST /api/download-zip` can bundle the PDFs (and any leftover `.docx` files) into a zip.
+
+## Desktop app
 
 Download the latest installer from [Releases](https://github.com/ks1686/psych-cert-automator/releases):
 
 | Platform | Download |
-|----------|----------|
-| macOS | `.dmg` file — drag to Applications |
-| Windows | `.msi` file — double-click to install |
-| Linux | `.deb` file — install with your system package manager |
+| --- | --- |
+| macOS | `.dmg` (drag to Applications) |
+| Windows | `.msi` |
+| Linux | `.deb` |
 
-The app is self-contained — no Python, Node, or other dependencies needed. Works fully offline.
+Release builds run on pushes to `main` and on `v*` tags. macOS release builds are signed with Developer ID and notarized when the Apple secrets are present. A local `bun run tauri build` stays unsigned: `signingIdentity` in `src-tauri/tauri.conf.json` is null. The published Linux artifact is the `.deb`. The Tauri bundle list also names `rpm`, but the release workflow uploads the `.deb`.
 
-> **macOS note**: Release builds are signed with Developer ID and notarized by Apple. After installing from the `.dmg`, the app should open normally under Gatekeeper.
+The app is offline. Its Python sidecar listens on `http://127.0.0.1:8008`.
 
-## CLI (for automation / scripts)
+The wizard has four steps: upload the two workbooks, enter the session, review matches, then generate. Session metadata can be saved as JSON under `~/.psych-cert-gen/sessions` through `POST /api/sessions`. There is no separate CLI config file. The CLI flags are the script interface, and that JSON API is the saved-session interface.
 
-### One-time setup
+## CLI
+
+Requires Python 3.12+ and [uv](https://docs.astral.sh/uv/).
 
 ```bash
-# Prerequisites: Python 3.12+, uv
-pip install uv
 git clone https://github.com/ks1686/psych-cert-automator.git
 cd psych-cert-automator
 uv sync
-```
 
-### Usage
-
-```
 uv run python certgen.py \
   --title "Training Title Here" \
   --date "2026-03-20" \
@@ -64,81 +78,78 @@ uv run python certgen.py \
   --output-dir "./output"
 ```
 
----
+| Flag | Required | Purpose |
+| --- | --- | --- |
+| `--title` | yes | Training title |
+| `--date` | yes | Start date, `YYYY-MM-DD` |
+| `--end-date` | no | Multi-day end date, `YYYY-MM-DD` |
+| `--instructor` | yes | Instructor name printed on the certificate |
+| `--ce-credits` | yes | Integer credit count |
+| `--ce-types` | yes | Comma-separated types offered, for example `APA,NASP,NY,NBCC` |
+| `--start-time` | yes | Session start, `HH:MM` |
+| `--end-time` | yes | Session end, `HH:MM` |
+| `--in-person` | no | In-person wording. Default is virtual |
+| `--location` | with `--in-person` | Location text. Required when `--in-person` is set |
+| `--exclude` | no | Qualtrics certificate name to skip. Repeat the flag for more names |
+| `--zoom-report` | yes | Zoom attendance `.xlsx` |
+| `--qualtrics-report` | yes | Qualtrics export `.xlsx` |
+| `--output-dir` | no | Output directory. Default `./output` |
+| `--manual-overrides` | no | CSV of Qualtrics name to Zoom name overrides |
+
+A Qualtrics row with an empty name or an empty CE type is skipped by the parser. One corrupt Zoom duration cell fails that workbook and the CLI exits with an error. The ineligibility workbook is written only after a successful parse.
 
 ## Development
 
-### Prerequisites
-
 | Tool | Version | Install |
-|------|---------|---------|
-| **Python** | 3.12+ | [python.org](https://www.python.org/downloads/) |
-| **uv** | latest | `pip install uv` |
-| **Rust** | 1.80+ | `curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \| sh` |
-| **Bun** | 1.3+ | `curl -fsSL https://bun.sh/install \| bash` |
+| --- | --- | --- |
+| Python | 3.12+ | [python.org](https://www.python.org/downloads/) |
+| uv | latest | see uv docs |
+| Rust | 1.80+ | [rustup](https://rustup.rs/) |
+| Bun | 1.3+ | [bun.sh](https://bun.sh/) |
+| poppler | 24.02 for golden tests | `poppler-utils` (`pdftoppm`, `pdftotext`, `pdfinfo`, `pdffonts`) |
 
-> **Node.js package management uses Bun**, not npm or pnpm. `bun install`, `bun run build`, etc.
-
-### Setup
+Frontend packages use Bun, not npm or pnpm.
 
 ```bash
-git clone https://github.com/ks1686/psych-cert-automator.git
-cd psych-cert-automator
-
-# Python backend
 uv sync
-
-# Frontend + Tauri
 bun install
-```
 
-### Run locally
-
-```bash
-# Terminal 1 — Python backend (http://localhost:8008)
+# Terminal 1: API at http://localhost:8008
 uv run python src/backends/main.py
 
-# Terminal 2 — Tauri desktop app (hot-reload)
+# Terminal 2: desktop app with hot reload
 bun run tauri dev
 ```
 
-### Testing
+### Tests
 
 ```bash
-uv run pytest                    # Python tests
-bun run test:unit                # Vitest wizard unit tests
-bun run test:e2e:mock            # Playwright mock e2e (stubbed API)
-bun run test:e2e:integration     # Playwright + real FastAPI + fixtures
-bun run build                    # TypeScript type-check + Vite build
-cargo check --manifest-path src-tauri/Cargo.toml  # Rust compilation
-# GitHub Actions: Test workflow on every PR/main push; full installers on main/tags
+uv run pytest                    # Python tests, including certificate layout
+bun run test:unit                # Vitest wizard tests
+bun run test:e2e:mock            # Playwright with a stubbed API
+bun run test:e2e:integration     # Playwright plus the real FastAPI app
+bun run build                    # TypeScript check and Vite build
+cargo check --manifest-path src-tauri/Cargo.toml
 ```
 
-### Build for distribution
+`tests/test_certificate_layout.py` renders every template, checks that text stays inside the page, and compares the PNG to `tests/fixtures/golden/`. Regenerate those fixtures only after an intentional layout change:
 
 ```bash
-# Build Python sidecar
+UPDATE_CERTIFICATE_GOLDENS=1 uv run pytest tests/test_certificate_layout.py
+```
+
+The Test workflow on Ubuntu 24.04 installs poppler, `fonts-croscore`, and `fonts-noto-core`, then runs pytest. `tests/conftest.py` points fontconfig at `tests/fixtures/fontconfig/fonts.conf` so Californian FB becomes Tinos and Arial Unicode MS uses Ubuntu's Noto Sans file. Golden images are tied to poppler 24.02 and those font packages. A different poppler build or a different Noto Sans file can fail the 0.1 percent pixel threshold even when the wording is unchanged.
+
+### Installers
+
+```bash
 uv run python build/build.py
-
-# Build Tauri installer for current platform
 bun run tauri build
-# → src-tauri/target/release/bundle/  (.dmg / .msi / .deb)
+# src-tauri/target/release/bundle/  (.dmg, .msi, or .deb)
 ```
 
-### Release
+Tagging `vX.Y.Z` on `main` runs the release workflow, which builds the macOS, Windows, and Linux installers and publishes a GitHub Release. Bump `pyproject.toml`, `package.json`, `src-tauri/tauri.conf.json`, and `src-tauri/Cargo.toml` together, then refresh `uv.lock`.
 
-```bash
-# Bump version in pyproject.toml, src-tauri/tauri.conf.json, package.json
-git add pyproject.toml src-tauri/tauri.conf.json package.json
-git commit -m "release: vX.Y.Z"
-git tag -a vX.Y.Z -m "vX.Y.Z"
-git push origin main --tags
-# CI builds macOS arm64, Windows x64, and Linux x64 installers,
-# then creates a GitHub Release automatically
-```
+## Further reading
 
----
-
-## Questions?
-
-For technical details see [PLAN.md](PLAN.md). For department-specific questions, ask your program coordinator.
+[PLAN.md](PLAN.md) is a historical design note. It is not the current spec. Use this README for what the app does today.
