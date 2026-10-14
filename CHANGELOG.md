@@ -6,7 +6,7 @@ First stable release of the certificate generator. The desktop app, CLI, and tem
 
 ### Fixed
 
-- Certificate of Attendance is one portrait page. The recipient name sits between "This is to certify that" and the attended sentence. The stray street-address block and the jammed phone and fax line are gone.
+- Certificate of Attendance is one portrait page, with the GSAPP logo in the letterhead and the Jessica Benas signature above the signature line. The recipient name sits between "This is to certify that" and the attended sentence. A long name and title still fit. The stray street-address block and the jammed phone and fax line are gone.
 - The NASP letterhead is left-aligned. The school name, street, URL, and phone stay on their own lines, and the logo no longer collides with that text.
 - A New York certificate with no license number leaves the license line blank instead of printing an unfilled "NY Psychology License #" label.
 

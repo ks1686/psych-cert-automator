@@ -343,6 +343,11 @@ def test_fill_attendance_puts_name_in_the_certify_line(tmp_path: Path) -> None:
             "Format: Live Webinar": "Format: Live Webinar",
         },
     )
+    with ZipFile(template_path_for("Certificate of Attendance")) as archive:
+        media = sorted(name for name in archive.namelist() if name.startswith("word/media/"))
+        document = archive.read("word/document.xml")
+    assert media == ["word/media/image1.jpeg", "word/media/image2.jpeg"]
+    assert document.count(b"r:embed=") == 2
     texts = _leaf_paragraph_texts(dest)
     certify = texts.index("This is to certify that")
     assert texts[certify + 1] == "Quinn Alvarez"
