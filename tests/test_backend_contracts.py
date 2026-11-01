@@ -86,7 +86,10 @@ def test_match_endpoint_accepts_frontend_participant_shape() -> None:
             "kind": "success",
             "qualtrics_name": "Alice Jones",
             "zoom_name": "Dr. Alice Jones",
-            "confidence": 0.9,
+            # Honorifics are stripped cleanly now, so "Dr. Alice Jones" is an
+            # exact match (it was 0.9 only because of a stray period).
+            "confidence": 1.0,
+            "needs_review": False,
             "candidates": None,
             "attendance": {
                 "is_eligible": True,
