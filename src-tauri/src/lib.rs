@@ -322,3 +322,47 @@ fn shutdown_sidecar(sidecar: &SidecarHandle, config: &BackendConfig) {
         let _ = child.kill();
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn no_env(_: &str) -> Option<String> {
+        None
+    }
+
+    #[test]
+    fn debug_builds_use_the_fixed_dev_port_and_token() {
+        let config = BackendConfig::for_build(true, no_env);
+        assert_eq!(config, BackendConfig { port: 8008, token: "psych-cert-dev".into() });
+    }
+
+    #[test]
+    fn debug_builds_accept_env_overrides() {
+        let config = BackendConfig::for_build(true, |key| match key {
+            "PSYCH_CERT_DEV_PORT" => Some("9123".into()),
+            "PSYCH_CERT_DEV_TOKEN" => Some("other".into()),
+            _ => None,
+        });
+        assert_eq!(config, BackendConfig { port: 9123, token: "other".into() });
+    }
+
+    #[test]
+    fn release_builds_ignore_dev_settings_and_stay_random() {
+        let env = |_: &str| Some("9123".to_string());
+        let a = BackendConfig::for_build(false, env);
+        let b = BackendConfig::for_build(false, env);
+        assert_eq!(a.token.len(), 64);
+        assert_ne!(a.token, b.token);
+        assert_ne!(a.token, DEV_TOKEN);
+    }
+
+    #[test]
+    fn csp_is_pinned_to_the_api_port() {
+        let csp = "connect-src 'self' ipc: http://127.0.0.1:*; img-src 'self'";
+        assert_eq!(
+            pin_csp_port(csp, 51234),
+            "connect-src 'self' ipc: http://127.0.0.1:51234; img-src 'self'"
+        );
+    }
+}
