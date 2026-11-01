@@ -38,7 +38,9 @@ SEGMENTS = [
 
 
 def test_zoom_report_with_an_extra_top_row(tmp_path: Path) -> None:
-    session = parse_zoom_attendance(str(write_zoom(tmp_path / "z.xlsx", SEGMENTS, extra_top_row=True)))
+    session = parse_zoom_attendance(
+        str(write_zoom(tmp_path / "z.xlsx", SEGMENTS, extra_top_row=True))
+    )
     assert session.session_start == at(9, 0)
     assert session.session_end == at(12, 0)
     assert [p.name_raw for p in session.participants] == ["Ada Lovelace", "Grace Hopper"]
@@ -54,7 +56,9 @@ def test_zoom_csv_export(tmp_path: Path) -> None:
 
 
 def test_qualtrics_three_header_rows(tmp_path: Path) -> None:
-    requests = parse_qualtrics_export(str(write_qualtrics(tmp_path / "q.xlsx", ROWS, three_header=True)))
+    requests = parse_qualtrics_export(
+        str(write_qualtrics(tmp_path / "q.xlsx", ROWS, three_header=True))
+    )
     assert [r.name_on_certificate for r in requests] == ["Ada Lovelace", "Grace Hopper"]
 
 
@@ -75,12 +79,20 @@ def test_pipeline_runs_on_csv_and_shifted_inputs(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr(
-        pipeline, "generate_all", lambda outputs, _d, **_k: [f"{i}.pdf" for i in range(len(outputs))]
+        pipeline,
+        "generate_all",
+        lambda outputs, _d, **_k: [f"{i}.pdf" for i in range(len(outputs))],
     )
     result = run_pipeline(
         str(write_zoom_csv(tmp_path / "z.csv", SEGMENTS)),
         str(write_qualtrics(tmp_path / "q.xlsx", ROWS, three_header=True)),
-        "T", date(2026, 11, 2), "P", 3, ["APA"], time(9, 0), time(12, 0),
+        "T",
+        date(2026, 11, 2),
+        "P",
+        3,
+        ["APA"],
+        time(9, 0),
+        time(12, 0),
         output_dir=str(tmp_path / "out"),
     )
     assert result.errors == []
@@ -95,15 +107,37 @@ def test_unreadable_file_is_a_400_with_a_plain_message(tmp_path: Path, name: str
     with pytest.raises(HTTPException) as caught:
         asyncio.run(parse_endpoint(ParseRequest(zoom_path=str(bad), qualtrics_path=str(qualtrics))))
     assert caught.value.status_code == 400
-    assert "read" in str(caught.value.detail).lower()
+    detail = str(caught.value.detail)
+    # The UI shows this under a "Parse Error" heading, so it must not repeat it.
+    assert detail.startswith(f"Could not read spreadsheet: Could not read {name}")
+    assert "parse error" not in detail.lower()
+
+
+def test_unreadable_qualtrics_file_is_a_400(tmp_path: Path) -> None:
+    zoom = write_zoom(
+        tmp_path / "z.xlsx", [seg("Ada Lovelace", "ada@example.test", at(9, 0), at(12, 0))]
+    )
+    bad = tmp_path / "q.xlsx"
+    bad.write_text("nope", encoding="utf-8")
+    with pytest.raises(HTTPException) as caught:
+        asyncio.run(parse_endpoint(ParseRequest(zoom_path=str(zoom), qualtrics_path=str(bad))))
+    assert caught.value.status_code == 400
+    assert str(caught.value.detail).startswith("Could not read spreadsheet: Could not read q.xlsx")
 
 
 def test_pipeline_reports_an_unreadable_file_as_an_error(tmp_path: Path) -> None:
     bad = tmp_path / "zoom.txt"
     bad.write_text("nope", encoding="utf-8")
     result = run_pipeline(
-        str(bad), str(write_qualtrics(tmp_path / "q.xlsx", ROWS)),
-        "T", date(2026, 11, 2), "P", 3, ["APA"], time(9, 0), time(12, 0),
+        str(bad),
+        str(write_qualtrics(tmp_path / "q.xlsx", ROWS)),
+        "T",
+        date(2026, 11, 2),
+        "P",
+        3,
+        ["APA"],
+        time(9, 0),
+        time(12, 0),
         output_dir=str(tmp_path / "out"),
     )
     assert result.errors
