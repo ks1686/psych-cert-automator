@@ -31,6 +31,7 @@ from src.models.certificate import (
     MatchAmbiguous,
     MatchNotFound,
     MatchSuccess,
+    allocate_unique_basenames,
 )
 from src.models.participant import extract_name_tokens, normalize_name
 from src.parser.qualtrics import parse_qualtrics_export
@@ -148,6 +149,38 @@ def session_window(
     """Return the window attendance is judged against (see ``judged_window``)."""
     start, end, _ = judged_window(meeting_start, meeting_end, start_time, end_time)
     return start, end
+
+
+REPORT_FILENAME = "ineligibility_report.xlsx"
+
+
+def rerun_warnings(
+    eligible: list[CertificateOutput],
+    generated_paths: list[str],
+    report_path: Path | None,
+) -> list[str]:
+    """Say which file is current when a rerun had to add a ``_2`` suffix.
+
+    Files are never overwritten, so a second run into the same folder writes
+    ``X_2.pdf`` next to the older ``X.pdf``; without this, nothing tells the
+    person which of the two to send.
+    """
+    warnings: list[str] = []
+    planned = allocate_unique_basenames(eligible)
+    for stem, generated in zip(planned, generated_paths, strict=False):
+        path = Path(generated)
+        if path.stem != stem:
+            older = f"{stem}{path.suffix}"
+            warnings.append(
+                f"{older} already existed in the output folder, so this run wrote "
+                f"{path.name}; {path.name} is the current file.",
+            )
+    if report_path is not None and report_path.name != REPORT_FILENAME:
+        warnings.append(
+            f"{REPORT_FILENAME} already existed in the output folder, so this run wrote "
+            f"{report_path.name}; {report_path.name} is the current report.",
+        )
+    return warnings
 
 
 def judged_window(
@@ -343,9 +376,10 @@ def run_pipeline(  # noqa: PLR0913
             )
 
         # ── Step 9: Generate ineligibility report ──────────────────────────
+        report_path: Path | None = None
         if ineligible:
-            report_path = str(next_free_path(Path(output_dir) / "ineligibility_report.xlsx"))
-            _ = generate_ineligibility_report(ineligible, report_path)
+            report_path = next_free_path(Path(output_dir) / REPORT_FILENAME)
+            _ = generate_ineligibility_report(ineligible, str(report_path))
 
         # ── Step 10: Log summary ───────────────────────────────────────────
         logger.info("Total CE requests: %d", len(all_requests))
@@ -361,6 +395,7 @@ def run_pipeline(  # noqa: PLR0913
             generated_paths=generated_paths,
             warnings=[
                 *([window_warning] if window_warning else []),
+                *rerun_warnings(eligible, generated_paths, report_path),
                 *(
                     warning
                     for cert, path in zip(eligible, generated_paths, strict=False)
