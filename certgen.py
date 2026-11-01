@@ -144,7 +144,11 @@ def main(  # noqa: PLR0913
         click.echo("No CE requests found in Qualtrics report.")
         sys.exit(0)
 
-    # ── Print summary ──────────────────────────────────────────────────────
+    _print_summary(result)
+
+
+def _print_summary(result: PipelineResult) -> None:
+    """Print counts, render warnings, and every request that was not issued."""
     pdf_count = len(result.eligible)
     click.echo(f"Total CE requests: {result.total_requests}")
     click.echo(f"Eligible: {len(result.eligible)}")

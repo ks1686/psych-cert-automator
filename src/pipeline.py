@@ -70,7 +70,6 @@ class PipelineResult:
     """Certificates that were generated but should be checked by a person."""
 
 
-
 def _dedupe_keys(request: CERequest) -> set[tuple[str, str, str]]:
     keys: set[tuple[str, str, str]] = set()
     name = normalize_name(request.name_on_certificate)
@@ -80,6 +79,11 @@ def _dedupe_keys(request: CERequest) -> set[tuple[str, str, str]]:
     if email:
         keys.add(("email", email, str(request.ce_type)))
     return keys
+
+
+def _submitted_sort_key(request: CERequest) -> float:
+    """Sortable submission time; untimed requests sort first (see caller)."""
+    return request.submitted_at.timestamp() if request.submitted_at else 0.0
 
 
 def dedupe_requests(requests: list[CERequest]) -> list[CERequest]:
@@ -95,7 +99,7 @@ def dedupe_requests(requests: list[CERequest]) -> list[CERequest]:
         range(len(requests)),
         key=lambda i: (
             requests[i].submitted_at is not None,
-            requests[i].submitted_at or datetime.min,
+            _submitted_sort_key(requests[i]),
             i,
         ),
     )
@@ -350,9 +354,7 @@ def _classify_requests(  # noqa: PLR0913
             )
             continue
         match match_result:
-            case MatchSuccess(matched_name=matched, confidence=conf) if (
-                conf < CONFIRMED_CONFIDENCE
-            ):
+            case MatchSuccess(matched_name=matched, confidence=conf) if conf < CONFIRMED_CONFIDENCE:
                 ineligible.append(
                     _make_ineligible(
                         request,
