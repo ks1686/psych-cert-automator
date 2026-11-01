@@ -259,8 +259,13 @@ function WizardApp() {
   }, []);
 
   /** Step 2 → Step 3: save upload data, run initial match API call, advance. */
+  const sessionTimes = wizardState.metadata;
   const goToStep3 = useCallback(async (data: UploadData) => {
     setWizardState((prev) => ({ ...prev, uploadData: data }));
+    // Eligibility is judged against the typed session times, not the Zoom
+    // meeting window (hosts often open early and close late).
+    const startTime = sessionTimes?.startTime ?? "";
+    const endTime = sessionTimes?.endTime ?? "";
     setTransitionPhase("matching");
     setMatchError(null);
 
@@ -277,6 +282,8 @@ function WizardApp() {
           ce_requests: requests,
           session_start: data.sessionStart,
           session_end: data.sessionEnd,
+          start_time: startTime || undefined,
+          end_time: endTime || undefined,
         }),
       });
 
@@ -295,6 +302,8 @@ function WizardApp() {
         ceRequests: requests,
         sessionStart: data.sessionStart,
         sessionEnd: data.sessionEnd,
+        startTime,
+        endTime,
         zoomHost: data.zoomHost,
         zoomPath: data.zoomPath,
       };
@@ -310,7 +319,7 @@ function WizardApp() {
       toast.error("Matching failed", { description: message });
       setMatchError(message);
     }
-  }, []);
+  }, [sessionTimes]);
 
   /** Step 3 → Step 4: save (potentially corrected) match data, derive training, advance. */
   const goToStep4 = useCallback((data: MatchData) => {

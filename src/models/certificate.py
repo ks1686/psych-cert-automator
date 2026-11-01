@@ -203,6 +203,9 @@ class EligibilityStatus(StrEnum):
     NAME_MATCH_AMBIGUOUS = "name_match_ambiguous"
     """Multiple possible Zoom matches — manual review required."""
 
+    NEEDS_REVIEW = "needs_review"
+    """A partial (below 1.0) name match that a person has not confirmed."""
+
     EXCLUDED = "excluded"
     """User excluded this person from certificate generation."""
 

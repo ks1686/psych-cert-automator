@@ -34,7 +34,7 @@ import {
   type IneligibleResult,
 } from "@/components/generate/IneligibilityReport";
 import { API_BASE, pdfViewUrl } from "@/api/client";
-import type { MatchData } from "@/components/StepMatchReview";
+import { matchNeedsReview, type MatchData } from "@/components/StepMatchReview";
 import type { UploadData } from "@/components/StepUpload";
 
 export type { IneligibleResult, IneligibleStatus } from "@/components/generate/IneligibilityReport";
@@ -119,6 +119,8 @@ function resolveEligibleEntries(
     if (match.kind !== "success") continue;
     if (!match.attendance?.is_eligible) continue;
     if (excluded.has(match.qualtrics_name)) continue;
+    // Partial matches are never generated until someone confirms them.
+    if (matchNeedsReview(match)) continue;
 
     // Find corresponding CE requests for this Qualtrics name.
     // A single person may have multiple CE requests (one per CE type).
@@ -173,6 +175,12 @@ function deriveIneligibleEntries(
         name: match.qualtrics_name,
         status: "Ambiguous",
         reason: `Multiple possible Zoom matches: ${(match.candidates ?? []).join(", ")}`,
+      });
+    } else if (matchNeedsReview(match)) {
+      results.push({
+        name: match.qualtrics_name,
+        status: "Needs Review",
+        reason: `Partial name match to Zoom "${match.zoom_name ?? ""}" was not confirmed.`,
       });
     } else if (
       match.kind === "success" &&

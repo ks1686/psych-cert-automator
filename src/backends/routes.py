@@ -26,7 +26,7 @@ from pydantic import BaseModel
 
 from src.generator.certificate import CertificateRenderOptions, generate_certificate
 from src.generator.zoom_host import extract_zoom_host
-from src.matcher.name_matcher import match_participants
+from src.matcher.name_matcher import CONFIRMED_CONFIDENCE, match_participants
 from src.models.certificate import (
     CertificateOutput,
     MatchAmbiguous,
@@ -37,7 +37,7 @@ from src.models.participant import AttendanceRecord, ParticipantAttendance
 from src.models.training import CEType
 from src.parser.qualtrics import parse_qualtrics_export
 from src.parser.zoom import ZoomParseError, parse_zoom_attendance
-from src.pipeline import PipelineResult, run_pipeline
+from src.pipeline import PipelineResult, run_pipeline, session_window
 from src.validator.attendance import validate_attendance
 
 router = APIRouter()
@@ -115,6 +115,10 @@ class MatchRequest(BaseModel):
     overrides: dict[str, str] | None = None
     session_start: datetime | None = None
     session_end: datetime | None = None
+    # Entered session times (HH:MM). When set they take precedence over the
+    # meeting window above, on the meeting's date, exactly like /generate.
+    start_time: time | None = None
+    end_time: time | None = None
     # When set, attendance uses full Zoom segments (same as generate).
     zoom_path: str | None = None
 
@@ -126,6 +130,9 @@ class MatchEntry(BaseModel):
     qualtrics_name: str
     zoom_name: str | None = None
     confidence: float | None = None
+    # True for a partial (below 1.0) match: it is excluded from generation
+    # until someone confirms it (the UI sends it back as an override).
+    needs_review: bool = False
     candidates: list[str] | None = None
     attendance: dict[str, object] | None = None
 
@@ -224,6 +231,8 @@ def _result_status(status: str) -> str:
             return "Attendance"
         case "name_match_ambiguous":
             return "Ambiguous"
+        case "needs_review":
+            return "Needs Review"
         case "excluded":
             return "Excluded"
         case "ce_type_not_offered":
@@ -356,13 +365,27 @@ async def match_endpoint(request: MatchRequest) -> MatchResponse:
         participants = [_participant_from_brief(p) for p in request.zoom_participants]
         session_start = request.session_start or min(p.first_join for p in participants)
         session_end = request.session_end or max(p.last_leave for p in participants)
+    session_start, session_end = session_window(
+        session_start, session_end, request.start_time, request.end_time,
+    )
 
     zoom_names = [p.name_raw for p in participants]
     zoom_lookup = {p.name_raw: p for p in participants}
     qualtrics_names = [r.name_on_certificate for r in request.ce_requests]
 
+    qualtrics_emails: dict[str, str | None] = {}
+    for r in request.ce_requests:
+        if r.email and not qualtrics_emails.get(r.name_on_certificate):
+            qualtrics_emails[r.name_on_certificate] = r.email
+
     result = await asyncio.to_thread(
-        match_participants, zoom_names, qualtrics_names, request.overrides,
+        lambda: match_participants(
+            zoom_names,
+            qualtrics_names,
+            request.overrides,
+            zoom_emails={p.name_raw: p.email for p in participants},
+            qualtrics_emails=qualtrics_emails,
+        ),
     )
 
     entries: list[MatchEntry] = []
@@ -376,6 +399,7 @@ async def match_endpoint(request: MatchRequest) -> MatchResponse:
                         qualtrics_name=q_name,
                         zoom_name=matched,
                         confidence=conf,
+                        needs_review=conf < CONFIRMED_CONFIDENCE,
                         attendance=_attendance_payload(
                             participant, session_start, session_end
                         ),

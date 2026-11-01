@@ -9,6 +9,15 @@ unambiguous match:
 4. First-name partial match — Qualtrics first name matches a single-token Zoom entry
    (confidence 0.7)
 
+When both sides carry an email, an identical (case-insensitive) email breaks
+ties between same-named attendees and confirms a partial name match
+(confidence 1.0). With no name relation at all, a unique email match is
+offered at confidence 0.8.
+
+Anything below 1.0 is a suggestion only: callers must treat it as
+"needs review" and require an explicit confirmation (a manual override)
+before issuing a certificate.
+
 After individual matching, shared Zoom matches (multiple Qualtrics names
 resolving to the same Zoom attendee) are reclassified as ambiguous.
 """
@@ -130,6 +139,47 @@ def _match_first_name_partial(
     return None
 
 
+EMAIL_ONLY_CONFIDENCE = 0.8
+"""Confidence for an email-only match (names unrelated)."""
+
+CONFIRMED_CONFIDENCE = 1.0
+"""Confidence at or above which a match needs no human review."""
+
+
+def _email_key(email: str | None) -> str | None:
+    if email is None:
+        return None
+    key = email.strip().casefold()
+    return key or None
+
+
+def _apply_email(
+    outcome: MatchSuccess | MatchAmbiguous | None,
+    q_email: str | None,
+    zoom_email_keys: dict[str, str | None],
+) -> MatchSuccess | MatchAmbiguous | None:
+    """Use the Qualtrics email to break ties and confirm partial name matches."""
+    if q_email is None:
+        return outcome
+    match outcome:
+        case MatchAmbiguous(candidates=candidates):
+            same = [c for c in candidates if zoom_email_keys.get(c) == q_email]
+            if len(same) == 1:
+                return MatchSuccess(matched_name=same[0], confidence=CONFIRMED_CONFIDENCE)
+            return outcome
+        case MatchSuccess(matched_name=matched, confidence=conf):
+            if conf < CONFIRMED_CONFIDENCE and zoom_email_keys.get(matched) == q_email:
+                return MatchSuccess(matched_name=matched, confidence=CONFIRMED_CONFIDENCE)
+            return outcome
+        case None:
+            same = [raw for raw, key in zoom_email_keys.items() if key == q_email]
+            if len(same) == 1:
+                return MatchSuccess(matched_name=same[0], confidence=EMAIL_ONLY_CONFIDENCE)
+            return None
+        case _:
+            assert_never(outcome)
+
+
 # ── Post-processing ───────────────────────────────────────────────────────────
 
 
@@ -161,6 +211,25 @@ def _resolve_shared_matches(results: dict[str, MatchResult]) -> None:
                 results[q_name] = MatchAmbiguous(candidates=(zoom_name,))
 
 
+def _match_by_name(  # noqa: PLR0913
+    q_norm: str,
+    q_tokens: frozenset[str],
+    q_first: str,
+    norm_to_zoom: dict[str, list[str]],
+    zoom_entries: list[tuple[str, frozenset[str]]],
+    single_token_zooms: dict[str, str],
+) -> MatchSuccess | MatchAmbiguous | None:
+    """Run strategies 2-4 in order and return the first outcome."""
+    if not q_norm:
+        return None
+    outcome = _match_exact_normalized(q_norm, norm_to_zoom)
+    if outcome is None:
+        outcome = _match_token_set(q_tokens, zoom_entries)
+    if outcome is None:
+        outcome = _match_first_name_partial(q_first, single_token_zooms)
+    return outcome
+
+
 # ── Public API ────────────────────────────────────────────────────────────────
 
 
@@ -168,6 +237,9 @@ def match_participants(
     zoom_names: list[str],
     qualtrics_names: list[str],
     manual_overrides: dict[str, str] | None = None,
+    *,
+    zoom_emails: dict[str, str | None] | None = None,
+    qualtrics_emails: dict[str, str | None] | None = None,
 ) -> dict[str, MatchResult]:
     """Match every Qualtrics CE-request name to a Zoom attendance name.
 
@@ -180,6 +252,8 @@ def match_participants(
         qualtrics_names: Raw Qualtrics name-on-certificate strings.
         manual_overrides: Optional ``{qualtrics_name: zoom_name}`` mapping
             for known edge cases.
+        zoom_emails: Optional ``{zoom_name: email}`` used as a tiebreaker.
+        qualtrics_emails: Optional ``{qualtrics_name: email}``.
 
     Returns:
         Dictionary keyed by each Qualtrics name → its ``MatchResult``.
@@ -199,6 +273,12 @@ def match_participants(
             single_token_zooms[raw] = token_list[0]
 
     overrides = manual_overrides if manual_overrides is not None else {}
+    zoom_email_keys = {
+        raw: _email_key((zoom_emails or {}).get(raw)) for raw in zoom_names
+    }
+    q_email_keys = {
+        raw: _email_key(email) for raw, email in (qualtrics_emails or {}).items()
+    }
     results: dict[str, MatchResult] = {}
 
     for q_raw in qualtrics_names:
@@ -210,13 +290,12 @@ def match_participants(
         match_outcome = _match_manual_override(q_raw, overrides)
 
         if match_outcome is None:
-            match_outcome = _match_exact_normalized(q_norm, norm_to_zoom)
-
-        if match_outcome is None:
-            match_outcome = _match_token_set(q_tokens, zoom_entries)
-
-        if match_outcome is None:
-            match_outcome = _match_first_name_partial(q_first, single_token_zooms)
+            q_email = q_email_keys.get(q_raw)
+            match_outcome = _apply_email(
+                _match_by_name(q_norm, q_tokens, q_first, norm_to_zoom, zoom_entries, single_token_zooms),
+                q_email,
+                zoom_email_keys,
+            )
 
         results[q_raw] = (
             match_outcome if match_outcome is not None else MatchNotFound()
@@ -253,7 +332,17 @@ def batch_match(
 
     zoom_names = list(zoom_lookup.keys())
     qualtrics_names = [r.name_on_certificate for r in ce_requests]
-    match_results = match_participants(zoom_names, qualtrics_names, manual_overrides)
+    qualtrics_emails: dict[str, str | None] = {}
+    for r in ce_requests:
+        if r.email and not qualtrics_emails.get(r.name_on_certificate):
+            qualtrics_emails[r.name_on_certificate] = r.email
+    match_results = match_participants(
+        zoom_names,
+        qualtrics_names,
+        manual_overrides,
+        zoom_emails={name: p.email for name, p in zoom_lookup.items()},
+        qualtrics_emails=qualtrics_emails,
+    )
 
     output: list[tuple[CERequest, ParticipantAttendance | None, MatchResult]] = []
     for request in ce_requests:

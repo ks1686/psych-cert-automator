@@ -22,6 +22,7 @@ export type IneligibleStatus =
   | "Not Found"
   | "Attendance"
   | "Ambiguous"
+  | "Needs Review"
   | "Excluded"
   | "Not Offered";
 
@@ -50,6 +51,13 @@ function statusBadge(status: IneligibleStatus) {
         <Badge className="border-transparent bg-orange-100 text-orange-800 dark:bg-orange-900 dark:text-orange-100">
           <AlertTriangle className="mr-1 h-3 w-3" />
           Ambiguous
+        </Badge>
+      );
+    case "Needs Review":
+      return (
+        <Badge className="border-transparent bg-amber-100 text-amber-800 dark:bg-amber-900 dark:text-amber-100">
+          <AlertTriangle className="mr-1 h-3 w-3" />
+          Needs Review
         </Badge>
       );
     case "Excluded":
@@ -113,6 +121,7 @@ export function IneligibilityReport({ entries }: IneligibilityReportProps) {
       "Not Found": 0,
       Attendance: 0,
       Ambiguous: 0,
+      "Needs Review": 0,
       Excluded: 0,
       "Not Offered": 0,
     };
@@ -133,7 +142,7 @@ export function IneligibilityReport({ entries }: IneligibilityReportProps) {
       </h3>
 
       <div className="mb-3 flex flex-wrap items-center gap-1">
-        {(["All", "Not Found", "Attendance", "Ambiguous", "Excluded", "Not Offered"] as const).map(
+        {(["All", "Not Found", "Attendance", "Ambiguous", "Needs Review", "Excluded", "Not Offered"] as const).map(
           (filter) => (
             <Button
               key={filter}

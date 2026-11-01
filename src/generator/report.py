@@ -98,6 +98,8 @@ def _status_fill(status: EligibilityStatus) -> PatternFill:
             return _FILL_NOT_FOUND
         case EligibilityStatus.NAME_MATCH_AMBIGUOUS:
             return _FILL_AMBIGUOUS
+        case EligibilityStatus.NEEDS_REVIEW:
+            return _FILL_AMBIGUOUS
         case EligibilityStatus.ATTENDANCE_INSUFFICIENT:
             return _FILL_INSUFFICIENT
         case EligibilityStatus.EXCLUDED:

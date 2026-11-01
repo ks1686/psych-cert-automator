@@ -55,8 +55,8 @@ def test_exact_normalized_match() -> None:
 
 
 def test_token_set_match() -> None:
-    """Given Qualtrics "John Smith" and Zoom "Dr. John Smith", after title stripping
-    the token sets match."""
+    """Given Qualtrics "John Smith" and Zoom "Dr. John Smith", stripping the
+    leading honorific makes the names identical (an exact match)."""
     results = match_participants(
         zoom_names=["Dr. John Smith"],
         qualtrics_names=["John Smith"],
@@ -66,7 +66,7 @@ def test_token_set_match() -> None:
     match result:
         case MatchSuccess(matched_name=name, confidence=conf):
             assert name == "Dr. John Smith"
-            assert conf == 0.9
+            assert conf == 1.0
         case _:
             pytest.fail(f"expected MatchSuccess, got {result}")
 

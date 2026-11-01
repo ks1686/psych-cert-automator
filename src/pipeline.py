@@ -10,14 +10,14 @@ from __future__ import annotations
 import csv
 import logging
 from dataclasses import dataclass, field
-from datetime import date, datetime, time
+from datetime import date, datetime, time, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, assert_never
 
 from src.generator.certificate import CertificateRenderOptions, generate_all
 from src.generator.report import generate_ineligibility_report
 from src.generator.templates import resolve_template_key
-from src.matcher.name_matcher import batch_match
+from src.matcher.name_matcher import CONFIRMED_CONFIDENCE, batch_match
 from src.models.certificate import (
     CERequest,
     CertificateOutput,
@@ -61,6 +61,30 @@ class PipelineResult:
     errors: list[str]
     generated_paths: list[str] = field(default_factory=list)
 
+
+
+def session_window(
+    meeting_start: datetime,
+    meeting_end: datetime,
+    start_time: time | None,
+    end_time: time | None,
+) -> tuple[datetime, datetime]:
+    """Return the window attendance is judged against.
+
+    The entered session times win over the Zoom meeting start/end, because
+    hosts often open the meeting early and close it late. The entered times
+    are placed on the Zoom meeting's date (so multi-day events use the date of
+    the uploaded report). An end time at or before the start rolls to the
+    next day. Without entered times the Zoom meeting window is used.
+    """
+    if start_time is None or end_time is None:
+        return meeting_start, meeting_end
+    day = meeting_start.date()
+    start = datetime.combine(day, start_time, tzinfo=meeting_start.tzinfo)
+    end = datetime.combine(day, end_time, tzinfo=meeting_start.tzinfo)
+    if end <= start:
+        end += timedelta(days=1)
+    return start, end
 
 
 # ── Public entry point ─────────────────────────────────────────────────────────────
@@ -156,12 +180,18 @@ def run_pipeline(  # noqa: PLR0913
             manual_overrides,
         )
 
+        window_start, window_end = session_window(
+            zoom_session.session_start,
+            zoom_session.session_end,
+            start_time,
+            end_time,
+        )
         eligible, ineligible = _classify_requests(
             matches,
             skip_names=skip_names,
             offered_keys=offered_keys,
-            session_start=zoom_session.session_start,
-            session_end=zoom_session.session_end,
+            session_start=window_start,
+            session_end=window_end,
             title=title,
             training_date=training_date,
             instructor=instructor,
@@ -248,6 +278,22 @@ def _classify_requests(  # noqa: PLR0913
             )
             continue
         match match_result:
+            case MatchSuccess(matched_name=matched, confidence=conf) if (
+                conf < CONFIRMED_CONFIDENCE
+            ):
+                ineligible.append(
+                    _make_ineligible(
+                        request,
+                        name_zoom=matched,
+                        match_status="needs review",
+                        reason=(
+                            f"Needs review: partial name match to Zoom {matched!r} "
+                            f"({round(conf * 100)}%). Confirm it in Review Matches "
+                            "or add a manual override."
+                        ),
+                        status=EligibilityStatus.NEEDS_REVIEW,
+                    )
+                )
             case MatchSuccess(matched_name=matched):
                 _handle_matched(
                     request,
