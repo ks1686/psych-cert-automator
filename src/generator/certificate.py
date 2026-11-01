@@ -112,7 +112,9 @@ def generate_certificate(
 
 
 _PAGE_OBJECT = re.compile(rb"/Type\s*/Page(?![a-zA-Z])")
-_PAGES_COUNT = re.compile(rb"/Type\s*/Pages\b[^>]*?/Count\s+(\d+)|/Count\s+(\d+)[^>]*?/Type\s*/Pages\b")
+_PAGES_COUNT = re.compile(
+    rb"/Type\s*/Pages\b[^>]*?/Count\s+(\d+)|/Count\s+(\d+)[^>]*?/Type\s*/Pages\b"
+)
 
 # Scripts the certificate fonts render: Latin (with extensions), Greek,
 # Cyrillic, combining marks, and common punctuation and symbols.
@@ -184,6 +186,30 @@ def certificate_warnings(output: CertificateOutput, generated_path: str) -> list
     return warnings
 
 
+_GENERATED_SUFFIXES = (".pdf", ".docx")
+
+
+def _avoid_existing_files(stems: list[str], out_dir: Path) -> list[str]:
+    """Suffix ``_2``, ``_3``... onto stems whose files already exist on disk."""
+
+    def taken(stem: str) -> bool:
+        return stem in chosen or any(
+            (out_dir / f"{stem}{suffix}").exists() for suffix in _GENERATED_SUFFIXES
+        )
+
+    chosen: set[str] = set(stems)
+    result: list[str] = []
+    for stem in stems:
+        chosen.discard(stem)
+        candidate, n = stem, 2
+        while taken(candidate):
+            candidate = f"{stem}_{n}"
+            n += 1
+        chosen.add(candidate)
+        result.append(candidate)
+    return result
+
+
 def generate_all(
     requests: list[CertificateOutput],
     output_dir: str,
@@ -193,7 +219,9 @@ def generate_all(
     """Generate certificates for a batch of eligible outputs.
 
     Assigns unique basenames within the batch so identical last names (or the
-    same person requesting multiple CE types) do not overwrite each other.
+    same person requesting multiple CE types) do not overwrite each other, and
+    skips names already used by a ``.pdf`` or ``.docx`` in ``output_dir`` so a
+    second run into the same folder never overwrites an earlier certificate.
 
     Args:
         requests: One ``CertificateOutput`` per certificate.
@@ -203,7 +231,7 @@ def generate_all(
     Returns:
         Absolute paths to generated PDF or DOCX files, in request order.
     """
-    stems = allocate_unique_basenames(requests)
+    stems = _avoid_existing_files(allocate_unique_basenames(requests), Path(output_dir))
     results: list[str] = []
     for req, stem in zip(requests, stems, strict=True):
         results.append(

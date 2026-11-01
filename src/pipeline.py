@@ -19,7 +19,7 @@ from src.generator.certificate import (
     certificate_warnings,
     generate_all,
 )
-from src.generator.report import generate_ineligibility_report
+from src.generator.report import generate_ineligibility_report, next_free_path
 from src.generator.templates import resolve_template_key
 from src.generator.zoom_host import host_matches_name
 from src.matcher.name_matcher import CONFIRMED_CONFIDENCE, batch_match
@@ -280,7 +280,7 @@ def run_pipeline(  # noqa: PLR0913
 
         # ── Step 9: Generate ineligibility report ──────────────────────────
         if ineligible:
-            report_path = str(Path(output_dir) / "ineligibility_report.xlsx")
+            report_path = str(next_free_path(Path(output_dir) / "ineligibility_report.xlsx"))
             _ = generate_ineligibility_report(ineligible, report_path)
 
         # ── Step 10: Log summary ───────────────────────────────────────────
