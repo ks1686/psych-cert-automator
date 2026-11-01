@@ -98,7 +98,9 @@ def parse_zoom_attendance(filepath: str) -> ZoomSession:
             filepath=filepath,
             reason="participant header row needs Name, Join time, and Leave time columns",
         )
-    session_start, session_end, host = _session_metadata(rows[:header_idx], filepath)
+    session_start, session_end, host, host_email = _session_metadata(
+        rows[:header_idx], filepath,
+    )
 
     raw_records = [
         _parse_attendance_row(_pick(row, columns), filepath)
@@ -119,6 +121,9 @@ def parse_zoom_attendance(filepath: str) -> ZoomSession:
         participants.append(replace(person, name_raw=label))
 
     participants.sort(key=lambda p: p.first_join)
+
+    if host is None and host_email:
+        host = _host_by_email(active, host_email)
 
     return ZoomSession(
         session_start=session_start,
@@ -198,11 +203,25 @@ def _pick(row: tuple[object, ...], columns: _ColumnMap) -> tuple[object, ...]:
     )
 
 
+def _host_by_email(records: list[AttendanceRecord], host_email: str) -> str | None:
+    """Display name of the attendee whose email is the host's, if any."""
+    wanted = host_email.strip().casefold()
+    for record in records:
+        if (record.email or "").strip().casefold() == wanted:
+            return _EMAIL_IN_PARENS.sub("", record.name_raw).strip() or record.name_raw
+    return None
+
+
 def _session_metadata(
     rows: list[tuple[object, ...]],
     filepath: str,
-) -> tuple[datetime, datetime, str | None]:
-    """Find meeting start, end, and host in the block above the participants."""
+) -> tuple[datetime, datetime, str | None, str | None]:
+    """Find meeting start, end, host, and host email above the participants.
+
+    The desktop/usage report has a "Host" column. The Zoom web portal CSV has
+    no host name, only "User Email", which is assumed to be the host's
+    account email; the caller turns it into a name using the attendee list.
+    """
     for i, row in enumerate(rows[:-1]):
         labels = [_text(cell) for cell in row]
         if "start time" in labels and "end time" in labels:
@@ -221,7 +240,13 @@ def _session_metadata(
             host = None
             if isinstance(host_raw, str) and host_raw.strip():
                 host = _EMAIL_IN_PARENS.sub("", host_raw).strip() or host_raw.strip()
-            return start, end, host
+            email_idx = next(
+                (j for j, label in enumerate(labels) if label in {"user email", "host email"}),
+                None,
+            )
+            email_raw = _cell(values, email_idx)
+            host_email = email_raw.strip() if isinstance(email_raw, str) and "@" in email_raw else None
+            return start, end, host, host_email
     raise ZoomParseError(
         filepath=filepath,
         reason="could not find the meeting Start time / End time above the participant list",
