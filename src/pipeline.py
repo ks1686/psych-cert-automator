@@ -418,6 +418,26 @@ def run_pipeline(  # noqa: PLR0913
 # ── Private helpers ─────────────────────────────────────────────────────────────────
 
 
+def _ambiguous_reason(
+    candidates: tuple[str, ...],
+    matches: list[tuple[CERequest, ParticipantAttendance | None, object]],
+) -> str:
+    """Why a request could not be tied to one Zoom attendee."""
+    if len(candidates) != 1:
+        return f"Multiple Zoom matches: {', '.join(candidates)}"
+    [zoom_name] = candidates
+    zoom_email = next(
+        (p.email for _r, p, _m in matches if p is not None and p.name_raw == zoom_name and p.email),
+        None,
+    )
+    joined_as = f"{zoom_name} ({zoom_email})" if zoom_email else zoom_name
+    return (
+        f"The Zoom attendee {joined_as} also matches another request from a different "
+        "person with the same name, so it is not clear whose attendance it is. Check "
+        "who attended and include this person by hand if they did."
+    )
+
+
 def _classify_requests(  # noqa: PLR0913
     matches: list[tuple[CERequest, ParticipantAttendance | None, object]],
     *,
@@ -490,7 +510,7 @@ def _classify_requests(  # noqa: PLR0913
                         request,
                         name_zoom=", ".join(candidates),
                         match_status="ambiguous",
-                        reason=f"Multiple Zoom matches: {', '.join(candidates)}",
+                        reason=_ambiguous_reason(candidates, matches),
                         status=EligibilityStatus.NAME_MATCH_AMBIGUOUS,
                     )
                 )
