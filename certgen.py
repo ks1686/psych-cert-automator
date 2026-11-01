@@ -6,6 +6,7 @@ import sys
 from datetime import date, time
 
 import click
+from src.models.certificate import EligibilityStatus
 from src.models.credits import parse_ce_credits
 from src.pipeline import PipelineResult, run_pipeline
 
@@ -61,6 +62,12 @@ def _validate_ce_credits(_ctx: click.Context, _param: click.Parameter, value: st
 @click.option("--qualtrics-report", type=click.Path(exists=True), required=True)
 @click.option("--output-dir", type=click.Path(), default="./output")
 @click.option(
+    "--include-host",
+    is_flag=True,
+    default=False,
+    help="Also issue a certificate to the Zoom meeting host (left out by default)",
+)
+@click.option(
     "--manual-overrides",
     type=click.Path(exists=True),
     help="CSV of Qualtrics name → Zoom name overrides",
@@ -77,6 +84,7 @@ def main(  # noqa: PLR0913
     in_person: bool,
     location: str | None,
     excluded_names: tuple[str, ...],
+    include_host: bool,
     zoom_report: str,
     qualtrics_report: str,
     output_dir: str,
@@ -119,6 +127,7 @@ def main(  # noqa: PLR0913
         overrides_path=manual_overrides,
         output_dir=output_dir,
         excluded_names=set(excluded_names),
+        exclude_host=not include_host,
         is_virtual=not in_person,
         location=None if not in_person else location,
         end_date=parsed_end_date,
@@ -141,6 +150,17 @@ def main(  # noqa: PLR0913
     click.echo(f"Eligible: {len(result.eligible)}")
     click.echo(f"Ineligible: {len(result.ineligible)}")
     click.echo(f"Certificates generated: {pdf_count}")
+    for warning in result.warnings:
+        click.echo(f"Warning: {warning}", err=True)
+    if result.ineligible:
+        click.echo("Not issued:")
+        for entry in result.ineligible:
+            click.echo(f"  - {entry.name_qualtrics} [{entry.status.value}]: {entry.reason}")
+    if any(e.status is EligibilityStatus.NEEDS_REVIEW for e in result.ineligible):
+        click.echo(
+            "Partial name matches need review. To accept one, add a row "
+            "'Survey name,Zoom name' to a CSV and pass --manual-overrides.",
+        )
 
 
 if __name__ == "__main__":

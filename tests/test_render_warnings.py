@@ -41,6 +41,7 @@ def _output(name: str, title: str = "Ethics") -> CertificateOutput:
         training_date=date(2026, 11, 2),
         instructor_name="Dr. Grace Hopper",
         license_number=None,
+        issue_date=date(2026, 11, 2),
     )
 
 

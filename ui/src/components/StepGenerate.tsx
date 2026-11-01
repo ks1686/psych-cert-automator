@@ -242,6 +242,7 @@ export default function StepGenerate({
   const [certificates, setCertificates] = useState<CertificateResult[]>([]);
   const [ineligible, setIneligible] = useState<IneligibleResult[]>([]);
   const [conversionWarning, setConversionWarning] = useState(false);
+  const [renderWarnings, setRenderWarnings] = useState<string[]>([]);
   const [previewIsPdf, setPreviewIsPdf] = useState(true);
   const [outputDir, setOutputDir] = useState("");
 
@@ -380,6 +381,7 @@ export default function StepGenerate({
         certificates: CertificateResult[];
         ineligible: IneligibleResult[];
         conversion_warning?: boolean;
+        warnings?: string[];
       } = await response.json();
 
       setCertificates(payload.certificates);
@@ -389,6 +391,7 @@ export default function StepGenerate({
           : derivedIneligible,
       );
       setConversionWarning(payload.conversion_warning === true);
+      setRenderWarnings(payload.warnings ?? []);
       setProgressLabel("Generation complete");
       setPhase("complete");
     } catch (err) {
@@ -592,6 +595,21 @@ export default function StepGenerate({
               <div className="rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-700 dark:bg-amber-950/40 dark:text-amber-100">
                 PDF conversion failed. Filled Word (`.docx`) certificates were
                 written instead.
+              </div>
+            )}
+            {renderWarnings.length > 0 && (
+              <div
+                role="alert"
+                className="rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-700 dark:bg-amber-950/40 dark:text-amber-100"
+              >
+                <p className="font-semibold">
+                  Check these certificates before sending:
+                </p>
+                <ul className="mt-1 list-disc pl-5">
+                  {renderWarnings.map((warning) => (
+                    <li key={warning}>{warning}</li>
+                  ))}
+                </ul>
               </div>
             )}
             {/* Certificate table */}

@@ -14,9 +14,14 @@ from datetime import date, datetime, time, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, assert_never
 
-from src.generator.certificate import CertificateRenderOptions, generate_all
+from src.generator.certificate import (
+    CertificateRenderOptions,
+    certificate_warnings,
+    generate_all,
+)
 from src.generator.report import generate_ineligibility_report
 from src.generator.templates import resolve_template_key
+from src.generator.zoom_host import host_matches_name
 from src.matcher.name_matcher import CONFIRMED_CONFIDENCE, batch_match
 from src.models.certificate import (
     CERequest,
@@ -61,6 +66,8 @@ class PipelineResult:
     ineligible: list[IneligibilityEntry]
     errors: list[str]
     generated_paths: list[str] = field(default_factory=list)
+    warnings: list[str] = field(default_factory=list)
+    """Certificates that were generated but should be checked by a person."""
 
 
 
@@ -155,6 +162,7 @@ def run_pipeline(  # noqa: PLR0913
     is_virtual: bool = True,
     location: str | None = None,
     end_date: date | None = None,
+    exclude_host: bool = False,
 ) -> PipelineResult:
     """Run the full CE certificate generation pipeline.
 
@@ -180,6 +188,8 @@ def run_pipeline(  # noqa: PLR0913
         is_virtual: When True, use virtual Location/Format template strings.
         location: In-person location text (ignored when ``is_virtual``).
         end_date: Optional multi-day end date for the certificate date range.
+        exclude_host: When True, leave out survey names that look like the
+            Zoom meeting host (the desktop app does this on its review step).
 
     Returns:
         ``PipelineResult`` with counts, eligible/ineligible lists, generated
@@ -210,6 +220,16 @@ def run_pipeline(  # noqa: PLR0913
                 ineligible=[],
                 errors=errors,
             )
+
+        if exclude_host and zoom_session.host:
+            host_names = {
+                r.name_on_certificate
+                for r in ce_requests
+                if host_matches_name(zoom_session.host, r.name_on_certificate)
+            }
+            if host_names:
+                logger.info("Excluding Zoom host: %s", ", ".join(sorted(host_names)))
+                skip_names |= host_names
 
         # ── Step 3: Load manual overrides ──────────────────────────────────
         manual_overrides = overrides
@@ -271,6 +291,11 @@ def run_pipeline(  # noqa: PLR0913
             ineligible=ineligible,
             errors=errors,
             generated_paths=generated_paths,
+            warnings=[
+                warning
+                for cert, path in zip(eligible, generated_paths, strict=False)
+                for warning in certificate_warnings(cert, path)
+            ],
         )
 
     except (FileNotFoundError, ZoomParseError, ValueError, KeyError, OSError) as exc:

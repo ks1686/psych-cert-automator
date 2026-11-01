@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass
 from datetime import date, time
 from pathlib import Path
@@ -108,6 +109,79 @@ def generate_certificate(
         docx_path.name,
     )
     return str(docx_path.resolve())
+
+
+_PAGE_OBJECT = re.compile(rb"/Type\s*/Page(?![a-zA-Z])")
+_PAGES_COUNT = re.compile(rb"/Type\s*/Pages\b[^>]*?/Count\s+(\d+)|/Count\s+(\d+)[^>]*?/Type\s*/Pages\b")
+
+# Scripts the certificate fonts render: Latin (with extensions), Greek,
+# Cyrillic, combining marks, and common punctuation and symbols.
+_SUPPORTED_RANGES: tuple[tuple[int, int], ...] = (
+    (0x0000, 0x024F),
+    (0x0250, 0x02FF),
+    (0x0300, 0x036F),
+    (0x0370, 0x03FF),
+    (0x0400, 0x04FF),
+    (0x1E00, 0x1EFF),
+    (0x2000, 0x206F),
+    (0x20A0, 0x20CF),
+    (0x2100, 0x214F),
+)
+
+
+def pdf_page_count(pdf_path: Path) -> int | None:
+    """Return the page count of a PDF, or ``None`` if it cannot be read cheaply."""
+    try:
+        data = pdf_path.read_bytes()
+    except OSError:
+        return None
+    pages = len(_PAGE_OBJECT.findall(data))
+    if pages:
+        return pages
+    counts = [int(a or b) for a, b in _PAGES_COUNT.findall(data)]
+    return max(counts) if counts else None
+
+
+def _unsupported_characters(text: str) -> str:
+    seen: list[str] = []
+    for char in text:
+        code = ord(char)
+        if any(low <= code <= high for low, high in _SUPPORTED_RANGES):
+            continue
+        if char not in seen:
+            seen.append(char)
+    return "".join(seen)
+
+
+def certificate_warnings(output: CertificateOutput, generated_path: str) -> list[str]:
+    """Return problems a person should check before sending this certificate.
+
+    Flags text in scripts the certificate fonts may not contain (for example
+    Chinese, Japanese, or Korean characters, which PDF conversion can drop
+    silently) and PDFs that spill onto a second page.
+    """
+    warnings: list[str] = []
+    for label, value in (
+        ("name", output.full_name),
+        ("title", output.training_title),
+        ("instructor", output.instructor_name),
+    ):
+        missing = _unsupported_characters(value)
+        if missing:
+            warnings.append(
+                f"{output.full_name} ({output.ce_type}): the {label} {value!r} uses "
+                f"characters the certificate font may not have ({missing}); "
+                "check the PDF or edit the Word document by hand.",
+            )
+    path = Path(generated_path)
+    if path.suffix.lower() == ".pdf" and path.is_file():
+        pages = pdf_page_count(path)
+        if pages is not None and pages > 1:
+            warnings.append(
+                f"{output.full_name} ({output.ce_type}): {path.name} has {pages} pages "
+                "(expected 1); a long name or title probably wrapped. Check it before sending.",
+            )
+    return warnings
 
 
 def generate_all(

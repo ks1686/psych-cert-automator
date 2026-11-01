@@ -562,6 +562,7 @@ async def generate_endpoint(request: GenerateRequest) -> dict[str, object]:
         "conversion_warning": any(
             Path(p).suffix.lower() == ".docx" for p in result.generated_paths
         ),
+        "warnings": result.warnings,
     }
 
 
