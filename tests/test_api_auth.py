@@ -90,9 +90,20 @@ def test_requests_with_the_token_are_served(token: str) -> None:
     assert json.loads(body)["status"] == "healthy"
 
 
-def test_pdf_links_may_carry_the_token_in_the_query(token: str) -> None:
-    status, _ = _call("GET", "/api/pdf", query=f"path=nope&auth={token}")
-    assert status != 401
+def test_pdf_links_need_no_launch_token(token: str) -> None:
+    """The opaque per-file path token is the capability; no launch token in URLs."""
+    status, _ = _call("GET", "/api/pdf", query="path=nope")
+    assert status == 404
+
+
+def test_launch_token_is_not_accepted_in_the_query(token: str) -> None:
+    status, _ = _call("GET", "/health", query=f"auth={token}")
+    assert status == 401
+
+
+def test_only_get_pdf_is_exempt(token: str) -> None:
+    status, _ = _call("POST", "/api/pdf", query="path=nope")
+    assert status == 401
 
 
 def test_cors_preflight_is_not_blocked(token: str) -> None:
@@ -133,3 +144,8 @@ def test_port_comes_from_the_environment(monkeypatch: pytest.MonkeyPatch) -> Non
     monkeypatch.delenv("PSYCH_CERT_PORT")
     monkeypatch.delenv("PORT", raising=False)
     assert main.configured_port() == 8008
+
+
+def test_ui_can_read_the_preview_warnings_header() -> None:
+    cors = next(m for m in main.app.user_middleware if "CORS" in str(m.cls))
+    assert "X-Certificate-Warnings" in cors.kwargs["expose_headers"]

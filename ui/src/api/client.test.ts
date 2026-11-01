@@ -37,7 +37,7 @@ test("desktop app uses the per-launch port and token", async () => {
   expect(headers.get("X-Psych-Cert-Token")).toBe("abc123");
   expect(headers.get("Content-Type")).toBe("application/json");
   expect(client.pdfViewUrl("tok en")).toBe(
-    "http://127.0.0.1:51234/api/pdf?path=tok%20en&auth=abc123",
+    "http://127.0.0.1:51234/api/pdf?path=tok%20en",
   );
 });
 
