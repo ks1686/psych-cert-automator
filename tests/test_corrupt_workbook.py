@@ -43,7 +43,7 @@ def files(tmp_path: Path) -> tuple[Path, Path, Path]:
 
 
 def test_truncated_sheet_xml_is_unreadable(files: tuple[Path, Path, Path]) -> None:
-    with pytest.raises(UnreadableFileError, match="broken.xlsx"):
+    with pytest.raises(UnreadableFileError, match=r"broken\.xlsx"):
         read_rows(str(files[2]))
 
 
@@ -51,9 +51,7 @@ def test_parse_returns_400_for_a_truncated_qualtrics_file(
     files: tuple[Path, Path, Path],
 ) -> None:
     zoom, _, broken = files
-    request = ParseRequest.model_validate(
-        {"zoom_path": str(zoom), "qualtrics_path": str(broken)}
-    )
+    request = ParseRequest.model_validate({"zoom_path": str(zoom), "qualtrics_path": str(broken)})
     with pytest.raises(HTTPException) as caught:
         asyncio.run(parse_endpoint(request))
     assert caught.value.status_code == 400

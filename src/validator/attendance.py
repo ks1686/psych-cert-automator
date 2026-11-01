@@ -7,6 +7,7 @@ based on join/leave times relative to the session window.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from itertools import pairwise
 from typing import TYPE_CHECKING
 
 from src.models.participant import ParticipantAttendance, normalize_name
@@ -97,7 +98,7 @@ def validate_attendance(
 
     total_gaps = sum(
         _minutes_between(prev_end, next_start)
-        for (_, prev_end), (next_start, _) in zip(spans, spans[1:], strict=False)
+        for (_, prev_end), (next_start, _) in pairwise(spans)
     )
 
     total_missed = round(late_join + early_leave + total_gaps, 1)

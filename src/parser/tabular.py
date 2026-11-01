@@ -66,19 +66,18 @@ def _read_xlsx(path: Path) -> list[Row]:
         raise UnreadableFileError(msg) from exc
     try:
         sheet = workbook.active
-        if sheet is None:
-            msg = f"Could not read {path.name}: the workbook has no worksheet."
-            raise UnreadableFileError(msg)
         # read_only sheets parse lazily, so damage inside the sheet XML only
         # shows up while iterating.
-        return [tuple(row) for row in sheet.iter_rows(values_only=True)]
-    except UnreadableFileError:
-        raise
+        rows = None if sheet is None else list(sheet.iter_rows(values_only=True))
     except _DAMAGED_WORKBOOK_ERRORS as exc:
         msg = f"Could not read {path.name}: the Excel file is damaged or incomplete."
         raise UnreadableFileError(msg) from exc
     finally:
         workbook.close()
+    if rows is None:
+        msg = f"Could not read {path.name}: the workbook has no worksheet."
+        raise UnreadableFileError(msg)
+    return [tuple(row) for row in rows]
 
 
 def _read_csv(path: Path) -> list[Row]:

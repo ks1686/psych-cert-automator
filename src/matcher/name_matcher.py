@@ -164,21 +164,25 @@ def _apply_email(
         return outcome
     match outcome:
         case MatchAmbiguous(candidates=candidates):
-            same = [c for c in candidates if zoom_email_keys.get(c) == q_email]
-            if len(same) == 1:
-                return MatchSuccess(matched_name=same[0], confidence=CONFIRMED_CONFIDENCE)
-            return outcome
+            confirmed = _only([c for c in candidates if zoom_email_keys.get(c) == q_email])
         case MatchSuccess(matched_name=matched, confidence=conf):
-            if conf < CONFIRMED_CONFIDENCE and zoom_email_keys.get(matched) == q_email:
-                return MatchSuccess(matched_name=matched, confidence=CONFIRMED_CONFIDENCE)
-            return outcome
+            same_email = zoom_email_keys.get(matched) == q_email
+            confirmed = matched if conf < CONFIRMED_CONFIDENCE and same_email else None
         case None:
-            same = [raw for raw, key in zoom_email_keys.items() if key == q_email]
-            if len(same) == 1:
-                return MatchSuccess(matched_name=same[0], confidence=EMAIL_ONLY_CONFIDENCE)
-            return None
+            same = _only([raw for raw, key in zoom_email_keys.items() if key == q_email])
+            if same is None:
+                return None
+            return MatchSuccess(matched_name=same, confidence=EMAIL_ONLY_CONFIDENCE)
         case _:
             assert_never(outcome)
+    if confirmed is None:
+        return outcome
+    return MatchSuccess(matched_name=confirmed, confidence=CONFIRMED_CONFIDENCE)
+
+
+def _only(names: list[str]) -> str | None:
+    """The single name in ``names``, or ``None`` when there are 0 or 2+."""
+    return names[0] if len(names) == 1 else None
 
 
 # ── Post-processing ───────────────────────────────────────────────────────────
@@ -332,7 +336,9 @@ def match_requests(
             )
         else:
             match_outcome = _apply_email(
-                _match_by_name(q_norm, q_tokens, q_first, norm_to_zoom, zoom_entries, single_token_zooms),
+                _match_by_name(
+                    q_norm, q_tokens, q_first, norm_to_zoom, zoom_entries, single_token_zooms
+                ),
                 q_email,
                 zoom_email_keys,
             )

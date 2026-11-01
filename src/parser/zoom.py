@@ -245,7 +245,8 @@ def _session_metadata(
                 None,
             )
             email_raw = _cell(values, email_idx)
-            host_email = email_raw.strip() if isinstance(email_raw, str) and "@" in email_raw else None
+            has_email = isinstance(email_raw, str) and "@" in email_raw
+            host_email = email_raw.strip() if has_email else None
             return start, end, host, host_email
     raise ZoomParseError(
         filepath=filepath,

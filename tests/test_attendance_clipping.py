@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
-from datetime import datetime
-
 from src.models.participant import AttendanceRecord, ParticipantAttendance
 from src.validator.attendance import validate_attendance
 
-START = datetime(2026, 11, 2, 9, 0)
-END = datetime(2026, 11, 2, 12, 0)
+from tests.synthetic import at
+
+START = at(9, 0)
+END = at(12, 0)
 
 
 def _person(*spans: tuple[tuple[int, int], tuple[int, int]]) -> ParticipantAttendance:
@@ -16,12 +16,9 @@ def _person(*spans: tuple[tuple[int, int], tuple[int, int]]) -> ParticipantAtten
         AttendanceRecord(
             name_raw="Riley Stone",
             email="riley@example.test",
-            join_time=datetime(2026, 11, 2, *join),
-            leave_time=datetime(2026, 11, 2, *leave),
-            duration_minutes=int(
-                (datetime(2026, 11, 2, *leave) - datetime(2026, 11, 2, *join)).total_seconds()
-                // 60
-            ),
+            join_time=at(*join),
+            leave_time=at(*leave),
+            duration_minutes=int((at(*leave) - at(*join)).total_seconds() // 60),
             is_guest=False,
             is_waiting_room=False,
         )

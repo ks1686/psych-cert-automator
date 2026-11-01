@@ -13,6 +13,7 @@ from src.backends.routes import (
     MatchRequest,
     ParseRequest,
     PreviewRequest,
+    _result_status,
     download_zip_endpoint,
     generate_endpoint,
     match_endpoint,
@@ -41,7 +42,8 @@ class _GenerateResponse(BaseModel):
 async def _response_body(response: object) -> bytes:
     body_iterator = getattr(response, "body_iterator", None)
     if body_iterator is None:
-        raise TypeError("expected StreamingResponse")
+        msg = "expected StreamingResponse"
+        raise TypeError(msg)
     chunks: list[bytes] = []
     async for chunk in body_iterator:
         if isinstance(chunk, str):
@@ -197,7 +199,7 @@ def test_preview_endpoint_accepts_flat_frontend_payload() -> None:
         "application/pdf",
         "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
     }
-    assert body.startswith(b"%PDF") or body.startswith(b"PK")
+    assert body.startswith((b"%PDF", b"PK"))
 
 
 def test_download_zip_rejects_unregistered_pdf_paths(tmp_path: Path) -> None:
@@ -279,8 +281,6 @@ def test_generate_rejects_injectable_output_dir(tmp_path: Path) -> None:
 
 
 def test_excluded_status_label() -> None:
-    from src.backends.routes import _result_status
-
     assert _result_status("excluded") == "Excluded"
     assert _result_status("attendance_insufficient") == "Attendance"
     assert _result_status("ce_type_not_offered") == "Not Offered"

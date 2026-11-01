@@ -50,11 +50,21 @@ def test_pipeline_judges_the_overlap_and_warns(
 ) -> None:
     zoom, qualtrics = ended_early
     monkeypatch.setattr(
-        pipeline, "generate_all", lambda outputs, _d, **_k: [f"{i}.pdf" for i in range(len(outputs))]
+        pipeline,
+        "generate_all",
+        lambda outputs, _d, **_k: [f"{i}.pdf" for i in range(len(outputs))],
     )
     result = run_pipeline(
-        str(zoom), str(qualtrics), "T", date(2026, 11, 2), "P", 3, ["APA"],
-        time(9, 0), time(12, 0), output_dir=str(tmp_path / "out"),
+        str(zoom),
+        str(qualtrics),
+        "T",
+        date(2026, 11, 2),
+        "P",
+        3,
+        ["APA"],
+        time(9, 0),
+        time(12, 0),
+        output_dir=str(tmp_path / "out"),
     )
     assert [c.full_name for c in result.eligible] == ["Olive Ontime"]
     assert [e.name_qualtrics for e in result.ineligible] == ["Lou Late"]

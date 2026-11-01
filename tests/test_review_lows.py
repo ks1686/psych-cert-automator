@@ -7,9 +7,9 @@ import json
 import zlib
 from datetime import date, time
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
-from src import pipeline
 from src.backends import routes
 from src.backends.routes import PreviewRequest, preview_endpoint
 from src.generator import certificate as certificate_module
@@ -21,6 +21,8 @@ from src.pipeline import run_pipeline
 
 from tests.synthetic import at, seg, write_qualtrics, write_zoom
 
+if TYPE_CHECKING:
+    from src.pipeline import PipelineResult
 
 # ── Page count inside compressed object streams ──────────────────────────────
 
@@ -98,9 +100,7 @@ def test_preview_reports_unsupported_characters(
 ) -> None:
     def fake_generate(output: CertificateOutput, out_dir: str, **_kw: object) -> str:
         path = Path(out_dir) / "preview.pdf"
-        path.write_bytes(
-            b"%PDF-1.7\n1 0 obj << /Type /Page >> endobj\n%%EOF\n"
-        )
+        path.write_bytes(b"%PDF-1.7\n1 0 obj << /Type /Page >> endobj\n%%EOF\n")
         return str(path)
 
     monkeypatch.setattr(routes, "generate_certificate", fake_generate)
@@ -153,10 +153,18 @@ def test_rerun_warns_which_files_are_current(
     )
     out = tmp_path / "out"
 
-    def run() -> pipeline.PipelineResult:
+    def run() -> PipelineResult:
         return run_pipeline(
-            str(zoom), str(qualtrics), "T", date(2026, 11, 2), "Pat Presenter", 3, ["APA"],
-            time(9, 0), time(12, 0), output_dir=str(out),
+            str(zoom),
+            str(qualtrics),
+            "T",
+            date(2026, 11, 2),
+            "Pat Presenter",
+            3,
+            ["APA"],
+            time(9, 0),
+            time(12, 0),
+            output_dir=str(out),
         )
 
     first = run()

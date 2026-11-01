@@ -14,7 +14,7 @@ import asyncio
 from datetime import date, time
 from typing import TYPE_CHECKING
 
-import src.pipeline as pipeline
+from src import pipeline
 from src.backends.routes import MatchRequest, match_endpoint
 from src.models.certificate import EligibilityStatus
 from src.parser.qualtrics import parse_qualtrics_export
@@ -32,13 +32,25 @@ NBCC = "Counselor (NBCC)"
 HOST = seg("Hana Host", "hana.host@example.test", at(8, 30), at(12, 15))
 
 
-def _run(tmp_path: Path, zoom: Path, qualtrics: Path, monkeypatch: pytest.MonkeyPatch) -> PipelineResult:
+def _run(
+    tmp_path: Path, zoom: Path, qualtrics: Path, monkeypatch: pytest.MonkeyPatch
+) -> PipelineResult:
     monkeypatch.setattr(
-        pipeline, "generate_all", lambda outputs, _d, **_k: [f"{i}.pdf" for i in range(len(outputs))]
+        pipeline,
+        "generate_all",
+        lambda outputs, _d, **_k: [f"{i}.pdf" for i in range(len(outputs))],
     )
     return run_pipeline(
-        str(zoom), str(qualtrics), "T", date(2026, 11, 2), "P", 3, ["APA", "NBCC"],
-        time(9, 0), time(12, 0), output_dir=str(tmp_path / "out"),
+        str(zoom),
+        str(qualtrics),
+        "T",
+        date(2026, 11, 2),
+        "P",
+        3,
+        ["APA", "NBCC"],
+        time(9, 0),
+        time(12, 0),
+        output_dir=str(tmp_path / "out"),
     )
 
 
@@ -49,7 +61,10 @@ def _certs(result: PipelineResult) -> list[tuple[str, str]]:
 def test_shared_email_with_different_names_is_not_a_duplicate(tmp_path: Path) -> None:
     q = write_qualtrics(
         tmp_path / "q.xlsx",
-        [("Pat Kim", "family@example.test", APA, None), ("Lee Kim", "family@example.test", APA, None)],
+        [
+            ("Pat Kim", "family@example.test", APA, None),
+            ("Lee Kim", "family@example.test", APA, None),
+        ],
     )
     kept = dedupe_requests(parse_qualtrics_export(str(q)))
     assert sorted(r.name_on_certificate for r in kept) == ["Lee Kim", "Pat Kim"]
@@ -58,7 +73,10 @@ def test_shared_email_with_different_names_is_not_a_duplicate(tmp_path: Path) ->
 def test_same_name_with_different_emails_is_not_a_duplicate(tmp_path: Path) -> None:
     q = write_qualtrics(
         tmp_path / "q.xlsx",
-        [("Chris Park", "chris.p1@example.test", APA, None), ("Chris Park", "chris.p2@example.test", APA, None)],
+        [
+            ("Chris Park", "chris.p1@example.test", APA, None),
+            ("Chris Park", "chris.p2@example.test", APA, None),
+        ],
     )
     kept = dedupe_requests(parse_qualtrics_export(str(q)))
     assert sorted(r.email or "" for r in kept) == ["chris.p1@example.test", "chris.p2@example.test"]
@@ -79,7 +97,10 @@ def test_a_shared_family_email_certifies_both_people(
     )
     q = write_qualtrics(
         tmp_path / "q.xlsx",
-        [("Pat Kim", "family@example.test", APA, None), ("Lee Kim", "family@example.test", APA, None)],
+        [
+            ("Pat Kim", "family@example.test", APA, None),
+            ("Lee Kim", "family@example.test", APA, None),
+        ],
     )
     result = _run(tmp_path, zoom, q, monkeypatch)
     assert _certs(result) == [("Lee Kim", APA), ("Pat Kim", APA)]
@@ -102,7 +123,10 @@ def test_two_people_named_alike_are_judged_on_their_own_attendance(
     # The one who left at 9:20 submitted last.
     q = write_qualtrics(
         tmp_path / "q.xlsx",
-        [("Chris Park", "chris.p1@example.test", APA, None), ("Chris Park", "chris.p2@example.test", APA, None)],
+        [
+            ("Chris Park", "chris.p1@example.test", APA, None),
+            ("Chris Park", "chris.p2@example.test", APA, None),
+        ],
         recorded=[at(12, 5), at(12, 30)],
     )
     result = _run(tmp_path, zoom, q, monkeypatch)
@@ -124,7 +148,10 @@ def test_same_name_different_ce_type_does_not_borrow_attendance(
     )
     q = write_qualtrics(
         tmp_path / "q.xlsx",
-        [("Chris Park", "chris.p1@example.test", APA, None), ("Chris Park", "chris.p2@example.test", NBCC, None)],
+        [
+            ("Chris Park", "chris.p1@example.test", APA, None),
+            ("Chris Park", "chris.p2@example.test", NBCC, None),
+        ],
     )
     result = _run(tmp_path, zoom, q, monkeypatch)
     assert _certs(result) == [("Chris Park", APA)]
@@ -144,7 +171,10 @@ def test_one_person_asking_for_two_ce_types_gets_both(
     )
     q = write_qualtrics(
         tmp_path / "q.xlsx",
-        [("Dana Ruiz", "dana@example.test", APA, None), ("Dana Ruiz", "dana@example.test", NBCC, None)],
+        [
+            ("Dana Ruiz", "dana@example.test", APA, None),
+            ("Dana Ruiz", "dana@example.test", NBCC, None),
+        ],
     )
     result = _run(tmp_path, zoom, q, monkeypatch)
     assert _certs(result) == [("Dana Ruiz", NBCC), ("Dana Ruiz", APA)]
@@ -161,7 +191,10 @@ def test_dropped_duplicates_are_listed_in_the_report(
     )
     q = write_qualtrics(
         tmp_path / "q.xlsx",
-        [("Alice Anders", "alice@example.test", APA, None), ("Alice Anders", "alice@example.test", APA, None)],
+        [
+            ("Alice Anders", "alice@example.test", APA, None),
+            ("Alice Anders", "alice@example.test", APA, None),
+        ],
     )
     result = _run(tmp_path, zoom, q, monkeypatch)
     assert _certs(result) == [("Alice Anders", APA)]
@@ -187,8 +220,16 @@ def test_match_endpoint_returns_one_entry_per_person(tmp_path: Path) -> None:
         {
             "zoom_participants": [],
             "ce_requests": [
-                {"name_on_certificate": "Chris Park", "ce_type": APA, "email": "chris.p1@example.test"},
-                {"name_on_certificate": "Chris Park", "ce_type": APA, "email": "chris.p2@example.test"},
+                {
+                    "name_on_certificate": "Chris Park",
+                    "ce_type": APA,
+                    "email": "chris.p1@example.test",
+                },
+                {
+                    "name_on_certificate": "Chris Park",
+                    "ce_type": APA,
+                    "email": "chris.p2@example.test",
+                },
             ],
             "zoom_path": str(zoom),
             "start_time": "09:00",

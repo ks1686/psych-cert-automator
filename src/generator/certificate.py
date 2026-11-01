@@ -6,8 +6,8 @@ import logging
 import re
 import zlib
 from dataclasses import dataclass
-from datetime import date, time
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from src.generator.convert import convert_docx_to_pdf
 from src.generator.templates import (
@@ -19,6 +19,9 @@ from src.generator.templates import (
     template_path_for,
 )
 from src.models.certificate import CertificateOutput, allocate_unique_basenames
+
+if TYPE_CHECKING:
+    from datetime import date, time
 
 logger = logging.getLogger(__name__)
 
@@ -34,11 +37,14 @@ class CertificateRenderOptions:
     session_end: time | None = None
 
 
+_NOON = 12
+
+
 def _format_clock(value: time | None) -> str:
     if value is None:
         return ""
     hour_12 = value.hour % 12 or 12
-    suffix = "AM" if value.hour < 12 else "PM"
+    suffix = "AM" if value.hour < _NOON else "PM"
     return f"{hour_12}:{value.minute:02d} {suffix}"
 
 
@@ -46,7 +52,7 @@ def _time_display(options: CertificateRenderOptions) -> str:
     start = _format_clock(options.session_start)
     end = _format_clock(options.session_end)
     if start and end:
-        return f"{start} – {end}"
+        return f"{start} \u2013 {end}"  # en dash, as on the printed certificate
     return start or end
 
 

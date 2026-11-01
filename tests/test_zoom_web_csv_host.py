@@ -17,17 +17,52 @@ if TYPE_CHECKING:
 
 def _write_web_csv(path: Path, *, host_email: str) -> Path:
     rows = [
-        ["Meeting ID", "Topic", "Start Time", "End Time", "User Email",
-         "Duration (Minutes)", "Participants"],
-        ["999 0001 1122", "Synthetic CE Workshop", "11/02/2026 08:30:00 AM",
-         "11/02/2026 12:15:00 PM", host_email, "225", "2"],
+        [
+            "Meeting ID",
+            "Topic",
+            "Start Time",
+            "End Time",
+            "User Email",
+            "Duration (Minutes)",
+            "Participants",
+        ],
+        [
+            "999 0001 1122",
+            "Synthetic CE Workshop",
+            "11/02/2026 08:30:00 AM",
+            "11/02/2026 12:15:00 PM",
+            host_email,
+            "225",
+            "2",
+        ],
         [],
-        ["Name (Original Name)", "User Email", "Join Time", "Leave Time",
-         "Duration (Minutes)", "Guest", "In Waiting Room"],
-        ["Hana Host", "hana.host@example.test", "11/02/2026 08:30:00 AM",
-         "11/02/2026 12:15:00 PM", "225", "No", "No"],
-        ["Olive Ontime", "olive@example.test", "11/02/2026 08:58:00 AM",
-         "11/02/2026 12:01:00 PM", "183", "No", "No"],
+        [
+            "Name (Original Name)",
+            "User Email",
+            "Join Time",
+            "Leave Time",
+            "Duration (Minutes)",
+            "Guest",
+            "In Waiting Room",
+        ],
+        [
+            "Hana Host",
+            "hana.host@example.test",
+            "11/02/2026 08:30:00 AM",
+            "11/02/2026 12:15:00 PM",
+            "225",
+            "No",
+            "No",
+        ],
+        [
+            "Olive Ontime",
+            "olive@example.test",
+            "11/02/2026 08:58:00 AM",
+            "11/02/2026 12:01:00 PM",
+            "183",
+            "No",
+            "No",
+        ],
     ]
     with path.open("w", newline="", encoding="utf-8") as handle:
         csv.writer(handle).writerows(rows)

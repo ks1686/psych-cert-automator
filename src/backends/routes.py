@@ -37,7 +37,7 @@ from src.models.certificate import (
     MatchNotFound,
     MatchSuccess,
 )
-from src.models.credits import CECredits
+from src.models.credits import CECredits  # noqa: TC001 (pydantic needs it at runtime)
 from src.models.participant import AttendanceRecord, ParticipantAttendance
 from src.models.training import CEType
 from src.parser.qualtrics import parse_qualtrics_export
@@ -237,24 +237,21 @@ def _attendance_payload(
     }
 
 
+_RESULT_STATUS_LABELS = {
+    "eligible": "Eligible",
+    "not_found_in_attendance": "Not Found",
+    "attendance_insufficient": "Attendance",
+    "name_match_ambiguous": "Ambiguous",
+    "needs_review": "Needs Review",
+    "excluded": "Excluded",
+    "ce_type_not_offered": "Not Offered",
+    "duplicate_submission": "Duplicate",
+}
+
+
 def _result_status(status: str) -> str:
-    match status:
-        case "not_found_in_attendance":
-            return "Not Found"
-        case "attendance_insufficient":
-            return "Attendance"
-        case "name_match_ambiguous":
-            return "Ambiguous"
-        case "needs_review":
-            return "Needs Review"
-        case "excluded":
-            return "Excluded"
-        case "ce_type_not_offered":
-            return "Not Offered"
-        case "duplicate_submission":
-            return "Duplicate"
-        case "eligible" | _:
-            return "Eligible" if status == "eligible" else "Attendance"
+    """UI label for an eligibility status (unknown ones read as attendance)."""
+    return _RESULT_STATUS_LABELS.get(status, "Attendance")
 
 
 def _register_generated_file(path: Path) -> str:
@@ -354,6 +351,39 @@ async def parse_endpoint(request: ParseRequest) -> ParseResponse:
     )
 
 
+async def _match_participants(
+    request: MatchRequest,
+) -> tuple[list[ParticipantAttendance], datetime, datetime]:
+    """Zoom participants and the meeting window for /match.
+
+    Parses ``zoom_path`` when given (same fidelity as /generate); otherwise
+    uses the participant briefs the UI sent.
+    """
+    if request.zoom_path:
+        try:
+            zoom_session = await asyncio.to_thread(
+                parse_zoom_attendance, request.zoom_path,
+            )
+        except (FileNotFoundError, ZoomParseError) as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return (
+            list(zoom_session.participants),
+            request.session_start or zoom_session.session_start,
+            request.session_end or zoom_session.session_end,
+        )
+    if not request.zoom_participants:
+        raise HTTPException(
+            status_code=400,
+            detail="zoom_participants must not be empty when zoom_path is omitted",
+        )
+    participants = [_participant_from_brief(p) for p in request.zoom_participants]
+    return (
+        participants,
+        request.session_start or min(p.first_join for p in participants),
+        request.session_end or max(p.last_leave for p in participants),
+    )
+
+
 @router.post("/match", response_model=MatchResponse)
 async def match_endpoint(request: MatchRequest) -> MatchResponse:
     """Match Qualtrics CE-request names to Zoom participant names.
@@ -368,27 +398,7 @@ async def match_endpoint(request: MatchRequest) -> MatchResponse:
     if not request.ce_requests:
         raise HTTPException(status_code=400, detail="ce_requests must not be empty")
 
-    if request.zoom_path:
-        try:
-            zoom_session = await asyncio.to_thread(
-                parse_zoom_attendance, request.zoom_path,
-            )
-        except FileNotFoundError as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
-        except ZoomParseError as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
-        participants = list(zoom_session.participants)
-        session_start = request.session_start or zoom_session.session_start
-        session_end = request.session_end or zoom_session.session_end
-    else:
-        if not request.zoom_participants:
-            raise HTTPException(
-                status_code=400,
-                detail="zoom_participants must not be empty when zoom_path is omitted",
-            )
-        participants = [_participant_from_brief(p) for p in request.zoom_participants]
-        session_start = request.session_start or min(p.first_join for p in participants)
-        session_end = request.session_end or max(p.last_leave for p in participants)
+    participants, session_start, session_end = await _match_participants(request)
     # The Zoom meeting window is real when it comes from the file or the UI;
     # a window guessed from participant join times is not clipped against.
     session_start, session_end, window_warning = judged_window(
@@ -585,7 +595,7 @@ async def generate_endpoint(request: GenerateRequest) -> dict[str, object]:
         strict=True,
     ):
         file_path = Path(generated_path)
-        if not file_path.is_file():
+        if not await asyncio.to_thread(file_path.is_file):
             raise HTTPException(
                 status_code=500,
                 detail=f"Generated certificate missing: {file_path.name}",
