@@ -161,3 +161,49 @@ def write_qualtrics(
         )
     wb.save(path)
     return path
+
+
+def write_zoom_csv(
+    path: Path,
+    rows: list[ZoomRow],
+    *,
+    meeting_start: datetime | None = None,
+    meeting_end: datetime | None = None,
+) -> Path:
+    """Write a Zoom web-portal CSV export (UTF-8 with BOM, 12-hour times)."""
+    fmt = "%m/%d/%Y %I:%M:%S %p"
+    start = meeting_start or at(9, 0)
+    end = meeting_end or at(12, 0)
+    lines = [
+        "Meeting ID,Topic,Start Time,End Time,User Email,Duration (Minutes),Participants",
+        f"999 0001 1122,Synthetic CE Workshop,{start.strftime(fmt)},{end.strftime(fmt)},"
+        f"hana.host@example.test,180,{len(rows)}",
+        "",
+        "Name (Original Name),User Email,Join Time,Leave Time,Duration (Minutes),Guest,"
+        "In Waiting Room",
+    ]
+    for name, email, join, leave, waiting in rows:
+        minutes = int((leave - join).total_seconds() // 60)
+        lines.append(
+            f"{name},{email or ''},{join.strftime(fmt)},{leave.strftime(fmt)},{minutes},No,{waiting}"
+        )
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8-sig")
+    return path
+
+
+def write_qualtrics_csv(path: Path, rows: list[QualtricsRow]) -> Path:
+    """Write a Qualtrics CSV export with the 3 header rows Qualtrics uses."""
+    import csv  # noqa: PLC0415
+
+    xlsx = write_qualtrics(path.with_suffix(".tmp.xlsx"), rows, three_header=True)
+    wb = openpyxl.load_workbook(xlsx)
+    ws = wb.active
+    assert ws is not None
+    with path.open("w", encoding="utf-8-sig", newline="") as handle:
+        writer = csv.writer(handle)
+        for row in ws.iter_rows(values_only=True):
+            writer.writerow(
+                ["" if v is None else (v.strftime("%Y-%m-%d %H:%M:%S") if isinstance(v, datetime) else v) for v in row]
+            )
+    xlsx.unlink()
+    return path
