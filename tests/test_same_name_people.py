@@ -245,3 +245,27 @@ def test_match_endpoint_returns_one_entry_per_person(tmp_path: Path) -> None:
         ([0], "Chris Park (chris.p1@example.test)", True),
         ([1], "Chris Park (chris.p2@example.test)", False),
     ]
+
+
+def test_a_namesake_without_their_own_zoom_row_gets_a_clear_reason(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    zoom = write_zoom(
+        tmp_path / "z.xlsx",
+        [HOST, seg("Chris Park", "chris.p1@example.test", at(9, 0), at(12, 0))],
+        meeting_start=at(8, 30),
+        meeting_end=at(12, 15),
+    )
+    q = write_qualtrics(
+        tmp_path / "q.xlsx",
+        [
+            ("Chris Park", "chris.p1@example.test", APA, None),
+            ("Chris Park", "chris.p2@example.test", NBCC, None),
+        ],
+    )
+    result = _run(tmp_path, zoom, q, monkeypatch)
+    [entry] = result.ineligible
+    assert entry.status is EligibilityStatus.NAME_MATCH_AMBIGUOUS
+    assert "Multiple Zoom matches" not in entry.reason
+    assert "chris.p1@example.test" in entry.reason
+    assert "same name" in entry.reason
