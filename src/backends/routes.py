@@ -33,6 +33,7 @@ from src.models.certificate import (
     MatchNotFound,
     MatchSuccess,
 )
+from src.models.credits import CECredits
 from src.models.participant import AttendanceRecord, ParticipantAttendance
 from src.models.training import CEType
 from src.parser.qualtrics import parse_qualtrics_export
@@ -148,7 +149,7 @@ class PreviewRequest(BaseModel):
 
     full_name: str
     ce_type: str
-    ce_credits: int
+    ce_credits: CECredits
     training_title: str
     training_date: date
     instructor_name: str
@@ -169,7 +170,7 @@ class GenerateRequest(BaseModel):
     title: str
     training_date: date
     instructor: str
-    ce_credits: int
+    ce_credits: CECredits
     ce_types: list[str]
     start_time: time
     end_time: time

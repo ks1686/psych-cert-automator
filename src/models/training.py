@@ -8,6 +8,8 @@ from typing import ClassVar, NewType, NotRequired, TypedDict, override
 
 from pydantic import BaseModel, ConfigDict
 
+from src.models.credits import parse_ce_credits
+
 CEType = NewType("CEType", str)
 """Branded string type for CE type short codes (e.g., 'APA', 'NASP', 'NY', 'NBCC')."""
 
@@ -22,7 +24,7 @@ class TrainingConfigDict(TypedDict):
     title: str
     date: str
     instructor_name: str
-    ce_credits: int
+    ce_credits: float
     ce_types_offered: list[str]
     session_start: str
     session_end: str
@@ -66,8 +68,8 @@ class TrainingMetadata(BaseModel):
     instructor_name: str
     """Name of the instructor."""
 
-    ce_credits: int
-    """Number of CE credits awarded for full attendance."""
+    ce_credits: float
+    """CE credits awarded for full attendance (quarter steps, e.g. 1.5)."""
 
     ce_types_offered: frozenset[CEType]
     """Short codes for CE types offered (e.g., {'APA', 'NASP', 'NY', 'NBCC'})."""
@@ -116,13 +118,14 @@ class TrainingMetadata(BaseModel):
         title = config["title"]
         instructor = config["instructor_name"]
 
-        ce_credit_count = config["ce_credits"]
-        if ce_credit_count < 1:
+        try:
+            ce_credit_count = parse_ce_credits(config["ce_credits"])
+        except ValueError as exc:
             raise TrainingConfigError(
                 field="ce_credits",
-                value=str(ce_credit_count),
-                reason="must be >= 1",
-            )
+                value=str(config["ce_credits"]),
+                reason=str(exc),
+            ) from exc
 
         ce_types_raw = config["ce_types_offered"]
         if not ce_types_raw:

@@ -72,7 +72,7 @@ class CertificateOutput:
     ce_type: CEType
     """CE type short code (e.g., 'APA')."""
 
-    ce_credits: int
+    ce_credits: float
     """Number of CE credits awarded."""
 
     training_title: str

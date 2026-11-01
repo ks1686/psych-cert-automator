@@ -96,7 +96,7 @@ def run_pipeline(  # noqa: PLR0913
     title: str,
     training_date: date,
     instructor: str,
-    ce_credits: int,
+    ce_credits: float,
     ce_types: list[str],
     start_time: time,
     end_time: time,
@@ -250,7 +250,7 @@ def _classify_requests(  # noqa: PLR0913
     title: str,
     training_date: date,
     instructor: str,
-    ce_credits: int,
+    ce_credits: float,
 ) -> tuple[list[CertificateOutput], list[IneligibilityEntry]]:
     eligible: list[CertificateOutput] = []
     ineligible: list[IneligibilityEntry] = []
@@ -391,7 +391,7 @@ def _handle_matched(  # noqa: PLR0913
     title: str,
     training_date: date,
     instructor: str,
-    ce_credits: int,
+    ce_credits: float,
     eligible: list[CertificateOutput],
     ineligible: list[IneligibilityEntry],
 ) -> None:

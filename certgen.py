@@ -6,14 +6,27 @@ import sys
 from datetime import date, time
 
 import click
+from src.models.credits import parse_ce_credits
 from src.pipeline import PipelineResult, run_pipeline
+
+
+def _validate_ce_credits(_ctx: click.Context, _param: click.Parameter, value: str) -> float:
+    try:
+        return parse_ce_credits(value)
+    except ValueError as exc:
+        raise click.BadParameter(str(exc)) from exc
 
 
 @click.command()
 @click.option("--title", required=True, help="Training title")
 @click.option("--date", "training_date_str", required=True, help="Training date (YYYY-MM-DD)")
 @click.option("--instructor", required=True, help="Instructor name")
-@click.option("--ce-credits", type=int, required=True, help="Number of CE credits")
+@click.option(
+    "--ce-credits",
+    required=True,
+    callback=_validate_ce_credits,
+    help="CE credits, in steps of 0.25 (e.g. 3 or 1.5)",
+)
 @click.option(
     "--ce-types",
     required=True,
@@ -56,7 +69,7 @@ def main(  # noqa: PLR0913
     title: str,
     training_date_str: str,
     instructor: str,
-    ce_credits: int,
+    ce_credits: float,
     ce_types: str,
     start_time: str,
     end_time: str,

@@ -32,6 +32,7 @@ from fastapi.middleware.cors import CORSMiddleware  # noqa: E402
 from pydantic import BaseModel  # noqa: E402
 
 from src.backends.routes import router  # noqa: E402
+from src.models.credits import CECredits  # noqa: E402
 from src.models.session import SessionConfig  # noqa: E402
 from src.models.training import TrainingConfigError, TrainingMetadata  # noqa: E402
 
@@ -90,7 +91,7 @@ class _SessionRequest(BaseModel):
     title: str
     date: str
     instructor: str
-    ce_credits: int
+    ce_credits: CECredits
     ce_types: str
     start_time: str
     end_time: str

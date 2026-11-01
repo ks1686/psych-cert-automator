@@ -12,6 +12,8 @@ from zipfile import ZIP_DEFLATED, ZipFile
 
 from lxml import etree
 
+from src.models.credits import format_ce_credits
+
 TemplateKey = Literal["apa", "ny", "nasp", "nbcc", "attendance"]
 
 _W_NS = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
@@ -46,7 +48,7 @@ class TemplateRenderContext:
     full_name: str
     training_title: str
     instructor_name: str
-    ce_credits: int
+    ce_credits: float
     license_number: str | None
     date_display: str
     time_display: str
@@ -123,7 +125,7 @@ def build_replacements(key: TemplateKey, ctx: TemplateRenderContext) -> dict[str
     title = ctx.training_title.strip()
     name = ctx.full_name.strip()
     instructor = ctx.instructor_name.strip()
-    credits = str(ctx.ce_credits)
+    credits = format_ce_credits(ctx.ce_credits)
     time_display = ctx.time_display.strip() or "—"
 
     if key == "apa":
