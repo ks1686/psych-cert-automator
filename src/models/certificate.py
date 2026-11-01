@@ -7,6 +7,8 @@ from dataclasses import dataclass
 from enum import StrEnum, unique
 from typing import TYPE_CHECKING
 
+from src.models.participant import surname
+
 if TYPE_CHECKING:
     from datetime import date, datetime
 
@@ -121,7 +123,10 @@ class CertificateOutput:
 
 
 def _last_name(full_name: str) -> str:
-    """Return the last whitespace-separated token of a person name."""
+    """Return the surname, skipping honorifics and credentials (``Ph.D.``)."""
+    found = surname(full_name)
+    if found:
+        return found
     parts = full_name.strip().rsplit(" ", 1)
     if len(parts) == _NAME_PARTS_COUNT:
         return parts[1]

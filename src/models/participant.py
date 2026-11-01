@@ -180,14 +180,25 @@ def _clean_token(token: str) -> str:
     return _TOKEN_STRIP.sub("", token).casefold()
 
 
-def _is_credential(token: str) -> bool:
+def _is_credential(token: str, *, all_caps_name: bool = False) -> bool:
+    """True for a degree or license token.
+
+    Credentials that double as surnames count only when written in capitals,
+    and never when the whole name is in capitals (``KIM LI MA``), because
+    then capitals say nothing about the token.
+    """
     key = _clean_token(token)
     if key in _CREDENTIALS:
         return True
-    if key in _SURNAME_LIKE_CREDENTIALS:
+    if key in _SURNAME_LIKE_CREDENTIALS and not all_caps_name:
         letters = token.replace(".", "")
         return letters.isupper()
     return False
+
+
+def _is_all_caps(tokens: list[str]) -> bool:
+    letters = "".join(ch for token in tokens for ch in token if ch.isalpha())
+    return len(tokens) > 1 and letters.isupper()
 
 
 def _split_tokens(text: str) -> list[str]:
@@ -207,7 +218,8 @@ def normalize_name(raw: str) -> str:
         4. Drop leading honorifics (``Dr.``) and trailing credentials, but
            only while at least a two-token name remains. Credentials that
            double as surnames (MA, PA, NP, RN, MS, JD, MD) are only dropped
-           when written in capitals, so ``Li Ma`` stays ``li ma``.
+           when written in capitals, so ``Li Ma`` stays ``li ma``, and never
+           from a name typed all in capitals (``KIM LI MA``).
         5. Remove periods and apostrophes inside tokens, treat hyphens as
            spaces, collapse whitespace, and casefold.
 
@@ -218,6 +230,12 @@ def normalize_name(raw: str) -> str:
         Normalized tokens joined by single spaces (``"patricia a farrell"``).
     """
     text = _PAREN_CONTENT.sub(" ", fold_text(raw)).replace("#", " ")
+    kept = _credential_free_segments(text)
+    return " ".join(_clean_token(t) for t in _name_tokens(kept))
+
+
+def _credential_free_segments(text: str) -> list[str]:
+    """Comma segments of ``text``, minus those made only of credentials."""
     segments = text.split(",")
     kept = [segments[0]]
     for segment in segments[1:]:
@@ -225,12 +243,33 @@ def normalize_name(raw: str) -> str:
         if tokens and all(_is_credential(t) for t in tokens):
             continue
         kept.append(segment)
-    tokens = _split_tokens(" ".join(kept))
+    return kept
+
+
+def _name_tokens(segments: list[str]) -> list[str]:
+    """Tokens without leading honorifics or trailing credentials (case kept)."""
+    tokens = _split_tokens(" ".join(segments))
     while len(tokens) > 1 and _clean_token(tokens[0]) in _HONORIFICS:
         tokens.pop(0)
-    while len(tokens) > _MIN_NAME_TOKENS and _is_credential(tokens[-1]):
+    caps = _is_all_caps(tokens)
+    while len(tokens) > _MIN_NAME_TOKENS and _is_credential(tokens[-1], all_caps_name=caps):
         tokens.pop()
-    return " ".join(_clean_token(t) for t in tokens)
+    return tokens
+
+
+def surname(raw: str) -> str:
+    """Last name as written, ignoring honorifics and credentials.
+
+    ``"Mark Roe, Ph.D."`` and ``"Dr. Mark Roe PhD"`` give ``"Roe"``. Returns
+    an empty string when nothing is left.
+    """
+    text = _PAREN_CONTENT.sub(" ", raw).replace("#", " ")
+    tokens = _name_tokens(_credential_free_segments(text))
+    # Two-token names keep a trailing credential in normalize_name (it may be
+    # a surname); for a filename prefer the token before an unambiguous one.
+    if len(tokens) == _MIN_NAME_TOKENS and _clean_token(tokens[-1]) in _CREDENTIALS:
+        tokens.pop()
+    return tokens[-1].strip(".,") if tokens else ""
 
 
 def extract_name_tokens(normalized: str) -> frozenset[str]:
