@@ -50,7 +50,11 @@ def _stdin_listener() -> None:
 
 DEFAULT_PORT = 8008
 TOKEN_HEADER = "X-Psych-Cert-Token"  # noqa: S105 (header name, not a secret)
-TOKEN_QUERY_PARAM = "auth"  # noqa: S105 (parameter name, not a secret)
+# Plain links (the PDF viewer) cannot send a header, and a launch token in a
+# URL leaks into browser history and logs. GET /api/pdf is reachable without
+# it instead: each file has its own unguessable registry token (192 bits from
+# secrets.token_urlsafe), handed out only in an authenticated /generate reply.
+PUBLIC_ROUTES = frozenset({("GET", "/api/pdf")})
 
 # Per-launch secret. The Tauri shell generates a random token for every launch
 # and hands it to this process in PSYCH_CERT_TOKEN; every request must echo it
@@ -68,19 +72,21 @@ def configured_port() -> int:
 class _TokenAuthMiddleware(BaseHTTPMiddleware):
     """Reject requests that do not carry the per-launch token.
 
-    The token is read from the X-Psych-Cert-Token header, or from the ``auth``
-    query parameter for plain links such as the PDF viewer. CORS preflight
-    requests carry no custom headers, so OPTIONS is passed through to the CORS
-    middleware, which answers it without reaching any endpoint.
+    The token is read only from the X-Psych-Cert-Token header, never from the
+    URL. ``PUBLIC_ROUTES`` (the PDF viewer link) are exempt; see above. CORS
+    preflight requests carry no custom headers, so OPTIONS is passed through to
+    the CORS middleware, which answers it without reaching any endpoint.
     """
 
     async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
         expected = API_TOKEN
-        if expected is None or request.method == "OPTIONS":
+        if (
+            expected is None
+            or request.method == "OPTIONS"
+            or (request.method, request.url.path) in PUBLIC_ROUTES
+        ):
             return await call_next(request)
-        supplied = request.headers.get(TOKEN_HEADER) or request.query_params.get(
-            TOKEN_QUERY_PARAM, ""
-        )
+        supplied = request.headers.get(TOKEN_HEADER, "")
         if not secrets.compare_digest(supplied.encode(), expected.encode()):
             return JSONResponse(status_code=401, content={"detail": "Missing or invalid token"})
         return await call_next(request)

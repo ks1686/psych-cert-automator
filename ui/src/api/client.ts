@@ -5,7 +5,8 @@
  * with a per-launch random token; a debug build (`bun run tauri dev`) uses
  * port 8008 and the token "psych-cert-dev". Both are exposed through the
  * `backend_config` command. Every request must send the token in the
- * X-Psych-Cert-Token header (or, for plain links, the `auth` query param).
+ * X-Psych-Cert-Token header. The one exception is the PDF viewer link, which
+ * cannot carry a header: its URL holds only the file's own unguessable token.
  * Outside Tauri (Vite dev server, browser e2e, Vitest) the backend runs on the
  * fixed development port without a token.
  *
@@ -17,7 +18,6 @@ import { invoke, isTauri } from "@tauri-apps/api/core";
 
 export const DEV_PORT = 8008;
 export const TOKEN_HEADER = "X-Psych-Cert-Token";
-const TOKEN_QUERY_PARAM = "auth";
 
 interface BackendConfig {
   port: number;
@@ -61,9 +61,10 @@ export async function apiFetch(
   return fetch(apiUrl(path), { ...init, headers });
 }
 
+/**
+ * Link to a generated file. It never includes the launch token, which would
+ * leak into browser history; the per-file token is enough for GET /api/pdf.
+ */
 export function pdfViewUrl(token: string): string {
-  const auth = apiToken
-    ? `&${TOKEN_QUERY_PARAM}=${encodeURIComponent(apiToken)}`
-    : "";
-  return `${apiUrl("/api/pdf")}?path=${encodeURIComponent(token)}${auth}`;
+  return `${apiUrl("/api/pdf")}?path=${encodeURIComponent(token)}`;
 }
