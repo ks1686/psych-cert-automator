@@ -16,7 +16,7 @@ import io
 import secrets
 import tempfile
 import zipfile
-from datetime import date, datetime, time, timezone
+from datetime import date, datetime, time
 from pathlib import Path
 from typing import Literal, assert_never
 
@@ -432,7 +432,9 @@ async def preview_endpoint(request: PreviewRequest) -> StreamingResponse:
     Returns a PDF when conversion succeeds; otherwise returns the filled
     ``.docx`` (soft-fail) so preview never hard-depends on a converter.
     """
-    issue_date = request.issue_date or datetime.now(tz=timezone.utc).date()  # noqa: UP017
+    # Local date, same as /generate and the CLI (a UTC date is a day ahead
+    # for evening sessions in the US).
+    issue_date = request.issue_date or date.today()  # noqa: DTZ011
 
     file_bytes, media_type, filename = await asyncio.to_thread(
         _build_preview_certificate,
