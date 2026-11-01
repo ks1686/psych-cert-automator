@@ -9,16 +9,16 @@ Built for the GSAPP Psychology Department at Rutgers. Desktop installers are pub
 
 ## What it does
 
-1. Reads a Zoom attendance workbook (who joined, when they left, and who the host was).
-2. Reads a Qualtrics CE request export (name, email, requested CE type, and an optional NY license number).
-3. Matches people across the two files by name.
-4. Keeps a request when late arrival, early departure, and total time missed (including mid-session gaps) are each 15 minutes or less. Waiting-room rows are ignored.
-5. Fills the official Word template for that CE type and writes a PDF.
+1. Reads a Zoom attendance report, `.xlsx` or `.csv` (who joined, when they left, and who the host was). An extra title row above the header is fine.
+2. Reads a Qualtrics CE request export, `.xlsx` or `.csv` (name, email, requested CE type, and an optional NY license number). The standard three header rows are handled, unfinished responses are dropped, and when one person submits more than once for the same CE type only the latest submission is kept.
+3. Matches people across the two files by name, ignoring case, accents, apostrophe style, and honorifics, and uses email to confirm or break ties. Only an exact match is accepted automatically. A partial match (for example a shared first name only) is marked Needs review and gets a certificate only after someone clicks Include in Review Matches, or adds it to `--manual-overrides` on the CLI.
+4. Keeps a request when late arrival, early departure, and total time missed (including mid-session gaps) are each 15 minutes or less, measured against the session start and end times you enter. Waiting-room rows are ignored.
+5. Fills the official Word template for that CE type and writes a PDF. A certificate that converts to two pages, or a name in a script the template fonts cannot print (for example Chinese), is listed as a warning to check before sending.
 6. Writes `ineligibility_report.xlsx` for anyone who was skipped, with the reason.
 
-The Zoom host is pre-excluded and can be included again from Review Matches. Any other row can be excluded with its own checkbox. The same names can be passed to the CLI with repeatable `--exclude`.
+The Zoom host is pre-excluded and can be included again from Review Matches. The CLI also leaves out the host unless you pass `--include-host`. Any other row can be excluded with its own checkbox. The same names can be passed to the CLI with repeatable `--exclude`.
 
-Deleting the output files and running again creates a fresh set of certificates.
+Running again into the same folder never overwrites earlier files: new certificates get a `_2`, `_3`, ... suffix, and so does the ineligibility report. Use an empty folder for a clean set.
 
 ## Certificate types
 
@@ -54,7 +54,7 @@ Release builds run on pushes to `main` and on `v*` tags. macOS release builds ar
 
 The app is offline. The desktop app starts its Python sidecar on a random free port on `127.0.0.1` with a random token generated for that launch; every API request must carry the token. Run on its own (`uv run python src/backends/main.py`), the sidecar listens on `http://127.0.0.1:8008` without a token, for development and the browser e2e tests.
 
-The wizard has four steps: upload the two workbooks, enter the session, review matches, then generate. Session metadata can be saved as JSON under `~/.psych-cert-gen/sessions` through `POST /api/sessions`. There is no separate CLI config file. The CLI flags are the script interface, and that JSON API is the saved-session interface.
+The wizard has four steps: upload the two reports, enter the session, review matches, then generate. Session metadata can be saved as JSON under `~/.psych-cert-gen/sessions` through `POST /api/sessions`. There is no separate CLI config file. The CLI flags are the script interface, and that JSON API is the saved-session interface.
 
 ## CLI
 
@@ -84,15 +84,16 @@ uv run python certgen.py \
 | `--date` | yes | Start date, `YYYY-MM-DD` |
 | `--end-date` | no | Multi-day end date, `YYYY-MM-DD` |
 | `--instructor` | yes | Instructor name printed on the certificate |
-| `--ce-credits` | yes | Integer credit count |
+| `--ce-credits` | yes | Credit count in steps of 0.25, for example `3` or `1.5` (printed as `1.5`, never `3.0`) |
 | `--ce-types` | yes | Comma-separated types offered, for example `APA,NASP,NY,NBCC` |
 | `--start-time` | yes | Session start, `HH:MM` |
 | `--end-time` | yes | Session end, `HH:MM` |
 | `--in-person` | no | In-person wording. Default is virtual |
 | `--location` | with `--in-person` | Location text. Required when `--in-person` is set |
 | `--exclude` | no | Qualtrics certificate name to skip. Repeat the flag for more names |
-| `--zoom-report` | yes | Zoom attendance `.xlsx` |
-| `--qualtrics-report` | yes | Qualtrics export `.xlsx` |
+| `--include-host` | no | Issue a certificate to the Zoom host too. Default leaves the host out |
+| `--zoom-report` | yes | Zoom attendance `.xlsx` or `.csv` |
+| `--qualtrics-report` | yes | Qualtrics export `.xlsx` or `.csv` |
 | `--output-dir` | no | Output directory. Default `./output` |
 | `--manual-overrides` | no | CSV of Qualtrics name to Zoom name overrides |
 
