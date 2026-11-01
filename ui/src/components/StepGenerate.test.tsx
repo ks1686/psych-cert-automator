@@ -304,3 +304,35 @@ test("counts only the requests of the matched person when two people share a nam
   );
   expect(screen.getByText("1 eligible certificate ready to generate.")).toBeInTheDocument();
 });
+
+test("shows the warnings the preview reports in its header", async () => {
+  const user = userEvent.setup();
+  const warning = "Alex Rivera (APA): the name uses characters the font may not have";
+  const fetchMock = vi.fn().mockResolvedValue(
+    new Response(new Uint8Array([80, 75]), {
+      status: 200,
+      headers: {
+        "Content-Type":
+          "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "X-Certificate-Warnings": JSON.stringify([warning]),
+      },
+    }),
+  );
+  vi.stubGlobal("fetch", fetchMock);
+
+  render(
+    <StepGenerate
+      onBack={vi.fn()}
+      onReset={vi.fn()}
+      matchData={matchData}
+      trainingMetadata={trainingMetadata}
+      uploadData={uploadData}
+    />,
+  );
+
+  await user.click(screen.getByRole("button", { name: /Preview Certificate/i }));
+
+  await waitFor(() => {
+    expect(screen.getByText(warning)).toBeInTheDocument();
+  });
+});
