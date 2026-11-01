@@ -36,6 +36,7 @@ from src.models.credits import CECredits
 from src.models.participant import AttendanceRecord, ParticipantAttendance
 from src.models.training import CEType
 from src.parser.qualtrics import parse_qualtrics_export
+from src.parser.tabular import UnreadableFileError
 from src.parser.zoom import ZoomParseError, parse_zoom_attendance
 from src.pipeline import PipelineResult, dedupe_requests, run_pipeline, session_window
 from src.validator.attendance import validate_attendance
@@ -270,6 +271,11 @@ def _clear_generated_registry() -> None:
 # ═══════════════════════════════════════════════════════════════════════════
 
 
+def _unreadable(exc: UnreadableFileError) -> HTTPException:
+    """400 for a file that is not a readable spreadsheet (same wording as before)."""
+    return HTTPException(status_code=400, detail=f"Could not read spreadsheet: {exc}")
+
+
 @router.post("/parse", response_model=ParseResponse)
 async def parse_endpoint(request: ParseRequest) -> ParseResponse:
     """Parse Zoom attendance and Qualtrics CE-request reports.
@@ -288,7 +294,11 @@ async def parse_endpoint(request: ParseRequest) -> ParseResponse:
     except FileNotFoundError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except ZoomParseError as exc:
+        if isinstance(exc.__cause__, UnreadableFileError):
+            raise _unreadable(exc.__cause__) from exc
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except UnreadableFileError as exc:
+        raise _unreadable(exc) from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except zipfile.BadZipFile as exc:
