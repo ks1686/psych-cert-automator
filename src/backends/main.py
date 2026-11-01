@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import secrets
 import signal
 import sys
 import threading
@@ -27,12 +28,14 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from fastapi import FastAPI, HTTPException  # noqa: E402
+from fastapi import FastAPI, HTTPException, Request, Response  # noqa: E402
 from fastapi.middleware.cors import CORSMiddleware  # noqa: E402
+from fastapi.responses import JSONResponse  # noqa: E402
 from pydantic import BaseModel  # noqa: E402
+from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint  # noqa: E402
 
 from src.backends.routes import router  # noqa: E402
-from src.models.credits import CECredits  # noqa: E402
+from src.models.credits import CECredits  # noqa: E402, TC001 (pydantic needs it at runtime)
 from src.models.session import SessionConfig  # noqa: E402
 from src.models.training import TrainingConfigError, TrainingMetadata  # noqa: E402
 
@@ -45,7 +48,49 @@ def _stdin_listener() -> None:
             return
 
 
+DEFAULT_PORT = 8008
+TOKEN_HEADER = "X-Psych-Cert-Token"  # noqa: S105 (header name, not a secret)
+TOKEN_QUERY_PARAM = "auth"  # noqa: S105 (parameter name, not a secret)
+
+# Per-launch secret. The Tauri shell generates a random token for every launch
+# and hands it to this process in PSYCH_CERT_TOKEN; every request must echo it
+# back. When it is unset (plain `uv run` dev server, browser e2e) the API runs
+# without auth and says so on startup.
+API_TOKEN: str | None = os.environ.get("PSYCH_CERT_TOKEN") or None
+
+
+def configured_port() -> int:
+    """Port to listen on: PSYCH_CERT_PORT (set by Tauri), then PORT, then 8008."""
+    raw = os.environ.get("PSYCH_CERT_PORT") or os.environ.get("PORT")
+    return int(raw) if raw else DEFAULT_PORT
+
+
+class _TokenAuthMiddleware(BaseHTTPMiddleware):
+    """Reject requests that do not carry the per-launch token.
+
+    The token is read from the X-Psych-Cert-Token header, or from the ``auth``
+    query parameter for plain links such as the PDF viewer. CORS preflight
+    requests carry no custom headers, so OPTIONS is passed through to the CORS
+    middleware, which answers it without reaching any endpoint.
+    """
+
+    async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
+        expected = API_TOKEN
+        if expected is None or request.method == "OPTIONS":
+            return await call_next(request)
+        supplied = request.headers.get(TOKEN_HEADER) or request.query_params.get(
+            TOKEN_QUERY_PARAM, ""
+        )
+        if not secrets.compare_digest(supplied.encode(), expected.encode()):
+            return JSONResponse(status_code=401, content={"detail": "Missing or invalid token"})
+        return await call_next(request)
+
+
 app = FastAPI(title="psych-cert-gen backend")
+
+# Added before CORS so CORS is the outer layer: a 401 still carries CORS
+# headers and the UI can read it instead of seeing "Failed to fetch".
+app.add_middleware(_TokenAuthMiddleware)
 
 # Allowed webview origins across platforms. Tauri v2 serves the app from a
 # different origin per platform, and getting this wrong silently breaks every
@@ -77,9 +122,17 @@ async def health() -> dict[str, str | int]:
     return {"status": "healthy", "pid": os.getpid()}
 
 
+class _ShutdownRequest(BaseModel):
+    reason: str
+
+
 @app.post("/shutdown")
-async def shutdown() -> dict[str, str]:
-    """Trigger graceful shutdown via SIGINT."""
+async def shutdown(_request: _ShutdownRequest) -> dict[str, str]:
+    """Trigger graceful shutdown via SIGINT.
+
+    Requires a JSON body: browsers cannot send application/json cross-origin
+    without a CORS preflight, so a random web page cannot shut the backend down.
+    """
     os.kill(os.getpid(), signal.SIGINT)
     return {"status": "shutting_down"}
 
@@ -187,5 +240,9 @@ if __name__ == "__main__":
     listener = threading.Thread(target=_stdin_listener, daemon=True)
     listener.start()
 
-    port = int(os.environ.get("PORT", "8008"))
-    uvicorn.run(app, host="127.0.0.1", port=port)
+    if API_TOKEN is None:
+        sys.stderr.write(
+            "[backend] WARNING: PSYCH_CERT_TOKEN is not set; the local API accepts "
+            "unauthenticated requests (development mode).\n"
+        )
+    uvicorn.run(app, host="127.0.0.1", port=configured_port())

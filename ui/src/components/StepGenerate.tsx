@@ -33,7 +33,7 @@ import {
   IneligibilityReport,
   type IneligibleResult,
 } from "@/components/generate/IneligibilityReport";
-import { API_BASE, pdfViewUrl } from "@/api/client";
+import { apiFetch, pdfViewUrl } from "@/api/client";
 import { matchNeedsReview, type MatchData } from "@/components/StepMatchReview";
 import type { UploadData } from "@/components/StepUpload";
 
@@ -294,7 +294,7 @@ export default function StepGenerate({
     try {
       const first = eligibleEntries[0];
 
-      const response = await fetch(`${API_BASE}/api/preview`, {
+      const response = await apiFetch("/api/preview", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -344,7 +344,7 @@ export default function StepGenerate({
     setConversionWarning(false);
 
     try {
-      const response = await fetch(`${API_BASE}/api/generate`, {
+      const response = await apiFetch("/api/generate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -416,7 +416,7 @@ export default function StepGenerate({
     try {
       const pdfPaths = certificates.map((c) => c.path);
 
-      const response = await fetch(`${API_BASE}/api/download-zip`, {
+      const response = await apiFetch("/api/download-zip", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ pdf_paths: pdfPaths }),

@@ -1,7 +1,7 @@
 import { useState, useCallback, useMemo } from "react";
 import { CheckCircle, AlertTriangle, XCircle, Loader2 } from "lucide-react";
 
-import { API_BASE } from "@/api/client";
+import { apiFetch } from "@/api/client";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -216,7 +216,7 @@ export default function StepMatchReview({
     setError(null);
 
     try {
-      const response = await fetch(`${API_BASE}/api/match`, {
+      const response = await apiFetch("/api/match", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

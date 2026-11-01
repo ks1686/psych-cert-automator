@@ -1,6 +1,6 @@
 import { useState, useCallback } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
-import { API_BASE } from "@/api/client";
+import { apiFetch } from "@/api/client";
 import { Loader2, Upload, FileSpreadsheet } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -177,7 +177,7 @@ export default function StepUpload({
     setParseResult(null);
 
     try {
-      const response = await fetch(`${API_BASE}/api/parse`, {
+      const response = await apiFetch("/api/parse", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

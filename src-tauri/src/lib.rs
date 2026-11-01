@@ -12,22 +12,68 @@ type SidecarHandle = Arc<Mutex<Option<CommandChild>>>;
 /// Number of trailing stderr lines kept for crash diagnostics.
 const STDERR_TAIL_LINES: usize = 20;
 
+/// Header the sidecar checks on every request (see src/backends/main.py).
+const TOKEN_HEADER: &str = "X-Psych-Cert-Token";
+
+/// Port used only if the OS refuses to hand out a free one.
+const FALLBACK_PORT: u16 = 8008;
+
+/// Per-launch connection details for the Python sidecar.
+///
+/// A fresh random port and a 256-bit random token are chosen on every launch.
+/// The sidecar receives them through environment variables and rejects any
+/// request without the token, so other local processes and web pages cannot
+/// drive the API. The webview reads them through the `backend_config` command.
+#[derive(Clone, serde::Serialize)]
+pub struct BackendConfig {
+    port: u16,
+    token: String,
+}
+
+impl BackendConfig {
+    fn generate() -> Self {
+        let port = std::net::TcpListener::bind("127.0.0.1:0")
+            .and_then(|listener| listener.local_addr())
+            .map(|addr| addr.port())
+            .unwrap_or(FALLBACK_PORT);
+        let mut bytes = [0u8; 32];
+        getrandom::getrandom(&mut bytes).expect("OS random number generator unavailable");
+        let token = bytes.iter().map(|b| format!("{b:02x}")).collect();
+        Self { port, token }
+    }
+
+    fn url(&self, path: &str) -> String {
+        format!("http://127.0.0.1:{}{}", self.port, path)
+    }
+}
+
+/// Hand the sidecar port and token to the frontend.
+#[tauri::command]
+fn backend_config(config: tauri::State<'_, BackendConfig>) -> BackendConfig {
+    config.inner().clone()
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let sidecar: SidecarHandle = Arc::new(Mutex::new(None));
     let sidecar_for_setup = sidecar.clone();
+    let config = BackendConfig::generate();
+    let config_for_setup = config.clone();
 
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
+        .manage(config.clone())
+        .invoke_handler(tauri::generate_handler![backend_config])
         .setup(move |app| {
             let handle = app.handle().clone();
-            spawn_sidecar(&handle, &sidecar_for_setup);
+            spawn_sidecar(&handle, &sidecar_for_setup, &config_for_setup);
             let retry_handle = handle.clone();
             let retry_sidecar = sidecar_for_setup.clone();
+            let retry_config = config_for_setup.clone();
             let _ = handle.listen("retry-sidecar", move |_| {
-                respawn_sidecar(&retry_handle, &retry_sidecar);
+                respawn_sidecar(&retry_handle, &retry_sidecar, &retry_config);
             });
             Ok(())
         })
@@ -37,7 +83,7 @@ pub fn run() {
             let sidecar = sidecar.clone();
             move |_app_handle, event| {
                 if let RunEvent::ExitRequested { .. } = event {
-                    shutdown_sidecar(&sidecar);
+                    shutdown_sidecar(&sidecar, &config);
                 }
             }
         });
@@ -47,14 +93,14 @@ pub fn run() {
 
 /// Spawn the Python FastAPI sidecar, wire up stdout/stderr forwarding,
 /// and begin health-check polling.
-fn respawn_sidecar(handle: &tauri::AppHandle, sidecar: &SidecarHandle) {
+fn respawn_sidecar(handle: &tauri::AppHandle, sidecar: &SidecarHandle, config: &BackendConfig) {
     if let Some(child) = sidecar.lock().unwrap().take() {
         let _ = child.kill();
     }
-    spawn_sidecar(handle, sidecar);
+    spawn_sidecar(handle, sidecar, config);
 }
 
-fn spawn_sidecar(handle: &tauri::AppHandle, sidecar: &SidecarHandle) {
+fn spawn_sidecar(handle: &tauri::AppHandle, sidecar: &SidecarHandle, config: &BackendConfig) {
     // Resolve and spawn the sidecar binary declared in tauri.conf.json.
     //
     // NOTE: use the *basename* "psych-cert-gen", not "bin/api/psych-cert-gen".
@@ -68,7 +114,11 @@ fn spawn_sidecar(handle: &tauri::AppHandle, sidecar: &SidecarHandle) {
     // backend never started.
     eprintln!("[sidecar] resolving psych-cert-gen ...");
     let mut rx = match handle.shell().sidecar("psych-cert-gen") {
-        Ok(cmd) => match cmd.spawn() {
+        Ok(cmd) => match cmd
+            .env("PSYCH_CERT_PORT", config.port.to_string())
+            .env("PSYCH_CERT_TOKEN", &config.token)
+            .spawn()
+        {
             Ok((rx, child)) => {
                 eprintln!("[sidecar] spawned OK, pid={:?}", child.pid());
                 *sidecar.lock().unwrap() = Some(child);
@@ -158,18 +208,23 @@ fn spawn_sidecar(handle: &tauri::AppHandle, sidecar: &SidecarHandle) {
 
     // ── health-check polling ────────────────────────────────────────────
     let hc_handle = handle.clone();
+    let hc_config = config.clone();
     tauri::async_runtime::spawn(async move {
-        poll_health(hc_handle, became_healthy).await;
+        poll_health(hc_handle, became_healthy, hc_config).await;
     });
 }
 
-/// Poll `GET http://127.0.0.1:8008/health` every 200 ms until the first
+/// Poll `GET http://127.0.0.1:<port>/health` (with the launch token) every 200 ms until the first
 /// 200 response (up to 60 s — PyInstaller onefile cold starts can be slow,
 /// especially under antivirus scanning on first run on Windows). Once
 /// healthy, emit `sidecar-ready` and switch to a slow periodic check every
 /// 5 s to detect crashes.
-async fn poll_health(handle: tauri::AppHandle, became_healthy: Arc<AtomicBool>) {
-    let health_url = "http://127.0.0.1:8008/health";
+async fn poll_health(
+    handle: tauri::AppHandle,
+    became_healthy: Arc<AtomicBool>,
+    config: BackendConfig,
+) {
+    let health_url = config.url("/health");
     let start = std::time::Instant::now();
     let timeout = std::time::Duration::from_secs(60);
     let mut ready_emitted = false;
@@ -192,9 +247,11 @@ async fn poll_health(handle: tauri::AppHandle, became_healthy: Arc<AtomicBool>) 
         }
 
         let attempt = {
-            let url = health_url.to_string();
+            let url = health_url.clone();
+            let token = config.token.clone();
             tokio::task::spawn_blocking(move || {
                 ureq::get(&url)
+                    .set(TOKEN_HEADER, &token)
                     .call()
                     .map(|r| r.status())
                     .map_err(|e| e.to_string())
@@ -245,13 +302,17 @@ async fn poll_health(handle: tauri::AppHandle, became_healthy: Arc<AtomicBool>) 
 
 /// Gracefully shut down the sidecar.
 ///
-/// 1. POST http://127.0.0.1:8008/shutdown to ask the FastAPI server
-///    to exit gracefully (works cross-platform, unlike stdin).
+/// 1. POST http://127.0.0.1:<port>/shutdown (token header plus the JSON
+///    body the endpoint requires) to ask the FastAPI server to exit
+///    gracefully (works cross-platform, unlike stdin).
 /// 2. Wait up to 2 seconds for the process to exit on its own.
 /// 3. Force-kill the process if it is still running (fallback).
-fn shutdown_sidecar(sidecar: &SidecarHandle) {
+fn shutdown_sidecar(sidecar: &SidecarHandle, config: &BackendConfig) {
     // Primary: HTTP graceful shutdown
-    let _ = ureq::post("http://127.0.0.1:8008/shutdown").call();
+    let _ = ureq::post(&config.url("/shutdown"))
+        .set(TOKEN_HEADER, &config.token)
+        .set("Content-Type", "application/json")
+        .send_string(r#"{"reason": "app-exit"}"#);
 
     // Give the process up to 2 s to exit cleanly
     std::thread::sleep(std::time::Duration::from_secs(2));

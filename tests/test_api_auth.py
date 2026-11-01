@@ -4,15 +4,11 @@ from __future__ import annotations
 
 import asyncio
 import json
-from typing import TYPE_CHECKING
 
 import pytest
 from src.backends import main
 
-if TYPE_CHECKING:
-    from collections.abc import Iterator
-
-TOKEN = "t0ken-for-tests"
+TOKEN = "t0ken-for-tests"  # noqa: S105 (test fixture value)
 
 
 def _call(
@@ -62,9 +58,9 @@ def _call(
 
 
 @pytest.fixture
-def token(monkeypatch: pytest.MonkeyPatch) -> Iterator[str]:
+def token(monkeypatch: pytest.MonkeyPatch) -> str:
     monkeypatch.setattr(main, "API_TOKEN", TOKEN)
-    yield TOKEN
+    return TOKEN
 
 
 @pytest.fixture

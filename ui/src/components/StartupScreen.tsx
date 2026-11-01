@@ -10,6 +10,7 @@ import { Loader2, AlertTriangle, CheckCircle2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
+import { apiFetch } from "@/api/client";
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -32,11 +33,10 @@ const READY_DISPLAY_MS = 1_500;
 /** Poll interval for the elapsed-time counter (ms). */
 const ELAPSED_TICK_MS = 200;
 /**
- * Backend health endpoint. Use 127.0.0.1 (not "localhost"): on Windows,
- * "localhost" often resolves to ::1 (IPv6) first, but uvicorn binds
- * 127.0.0.1 (IPv4) only, so a localhost fetch can fail to connect.
+ * Backend health endpoint. The port and auth token come from the Tauri shell
+ * per launch; apiFetch adds both (see src/api/client.ts).
  */
-const HEALTH_URL = "http://127.0.0.1:8008/health";
+const HEALTH_PATH = "/health";
 /** How often the frontend polls the health endpoint (ms). */
 const HEALTH_POLL_MS = 400;
 /** Per-request abort timeout for a single health poll (ms). */
@@ -183,7 +183,7 @@ export default function StartupScreen({ onReady }: StartupScreenProps) {
           () => controller.abort(),
           HEALTH_REQ_TIMEOUT_MS,
         );
-        const res = await fetch(HEALTH_URL, { signal: controller.signal });
+        const res = await apiFetch(HEALTH_PATH, { signal: controller.signal });
         clearTimeout(abort);
         if (res.ok) markReady();
       } catch {

@@ -9,7 +9,7 @@ import { listen } from "@tauri-apps/api/event";
 import { Loader2, AlertCircle } from "lucide-react";
 import { Toaster, toast } from "sonner";
 
-import { API_BASE } from "@/api/client";
+import { apiFetch } from "@/api/client";
 import { Button } from "@/components/ui/button";
 import StepMetadata from "@/components/StepMetadata";
 import type { MetadataFormData } from "@/components/StepMetadata";
@@ -273,7 +273,7 @@ function WizardApp() {
       const participants = data.zoomParticipants.map(toParticipantSummary);
       const requests = data.ceRequests.map(toCERequestSummary);
 
-      const response = await fetch(`${API_BASE}/api/match`, {
+      const response = await apiFetch("/api/match", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
