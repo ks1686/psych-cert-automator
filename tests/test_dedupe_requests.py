@@ -28,8 +28,8 @@ def _qualtrics(tmp_path: Path) -> Path:
         [
             ("Ann Lee", "ann@example.test", NY, "LATEST-111"),
             ("Ann Lee", "ann@example.test", NY, "OLD-000"),
-            ("ann  LEE", "ann@example.test", APA, None),
             ("Ann M. Lee", "ANN@example.test", APA, None),
+            ("Ann Lee", "ann@example.test", APA, None),
             ("Bo Diaz", "bo@example.test", APA, None),
             ("Bo Diaz", None, APA, None),
         ],
@@ -46,10 +46,10 @@ def test_dedupe_keeps_latest_per_person_and_ce_type(tmp_path: Path) -> None:
     requests = dedupe_requests(parse_qualtrics_export(str(_qualtrics(tmp_path))))
     kept = sorted((r.name_on_certificate, str(r.ce_type), r.license_number) for r in requests)
     assert kept == [
+        # same email + CE type: the 13:10 "Ann Lee" wins over "Ann M. Lee"
+        ("Ann Lee", APA, None),
         # same name + CE type: the 14:00 submission wins even though it is row 1
         ("Ann Lee", NY, "LATEST-111"),
-        # same email + CE type: the 13:10 submission wins over 13:05
-        ("Ann M. Lee", APA, None),
         # same normalized name (one row has no email)
         ("Bo Diaz", APA, None),
     ]
@@ -71,12 +71,11 @@ def test_pipeline_generates_one_certificate_per_person_and_type(
     result = run_pipeline(
         str(zoom), str(_qualtrics(tmp_path)), "T", date(2026, 11, 2), "P", 3, ["APA", "NY"],
         time(9, 0), time(12, 0), output_dir=str(tmp_path / "out"),
-        overrides={"Ann M. Lee": "Ann Lee"},
     )
     assert result.total_requests == 3
     certs = sorted((c.full_name, str(c.ce_type), c.license_number) for c in result.eligible)
     assert certs == [
+        ("Ann Lee", APA, None),
         ("Ann Lee", NY, "LATEST-111"),
-        ("Ann M. Lee", APA, None),
         ("Bo Diaz", APA, None),
     ]

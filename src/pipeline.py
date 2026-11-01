@@ -27,6 +27,7 @@ from src.models.certificate import (
     MatchNotFound,
     MatchSuccess,
 )
+from src.models.participant import normalize_name
 from src.parser.qualtrics import parse_qualtrics_export
 from src.parser.zoom import ZoomParseError, parse_zoom_attendance
 from src.validator.attendance import validate_attendance
@@ -61,6 +62,52 @@ class PipelineResult:
     errors: list[str]
     generated_paths: list[str] = field(default_factory=list)
 
+
+
+def _dedupe_keys(request: CERequest) -> set[tuple[str, str, str]]:
+    keys: set[tuple[str, str, str]] = set()
+    name = normalize_name(request.name_on_certificate)
+    if name:
+        keys.add(("name", name, str(request.ce_type)))
+    email = (request.email or "").strip().casefold()
+    if email:
+        keys.add(("email", email, str(request.ce_type)))
+    return keys
+
+
+def dedupe_requests(requests: list[CERequest]) -> list[CERequest]:
+    """Drop duplicate survey submissions, keeping the latest one.
+
+    Two requests are duplicates when they ask for the same CE type and share
+    a normalized name or an email (case-insensitive). "Latest" is the most
+    recent ``submitted_at``; requests without a time count as older than
+    timed ones, and ties keep the later row. The kept requests stay in
+    their original row order.
+    """
+    order = sorted(
+        range(len(requests)),
+        key=lambda i: (
+            requests[i].submitted_at is not None,
+            requests[i].submitted_at or datetime.min,
+            i,
+        ),
+    )
+    kept: dict[int, set[tuple[str, str, str]]] = {}
+    owner: dict[tuple[str, str, str], int] = {}
+    for i in order:
+        keys = _dedupe_keys(requests[i])
+        for key in keys:
+            previous = owner.get(key)
+            if previous is not None and previous in kept:
+                for old_key in kept.pop(previous):
+                    _ = owner.pop(old_key, None)
+        kept[i] = keys
+        for key in keys:
+            owner[key] = i
+    dropped = len(requests) - len(kept)
+    if dropped:
+        logger.info("Ignored %d duplicate survey submission(s).", dropped)
+    return [requests[i] for i in sorted(kept)]
 
 
 def session_window(
@@ -153,7 +200,7 @@ def run_pipeline(  # noqa: PLR0913
     try:
         # ── Steps 1-2: Parse reports ───────────────────────────────────────
         zoom_session = parse_zoom_attendance(zoom_path)
-        ce_requests = parse_qualtrics_export(qualtrics_path)
+        ce_requests = dedupe_requests(parse_qualtrics_export(qualtrics_path))
 
         if not ce_requests:
             logger.info("No CE requests found in Qualtrics report.")

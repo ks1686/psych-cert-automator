@@ -38,7 +38,7 @@ from src.models.participant import AttendanceRecord, ParticipantAttendance
 from src.models.training import CEType
 from src.parser.qualtrics import parse_qualtrics_export
 from src.parser.zoom import ZoomParseError, parse_zoom_attendance
-from src.pipeline import PipelineResult, run_pipeline, session_window
+from src.pipeline import PipelineResult, dedupe_requests, run_pipeline, session_window
 from src.validator.attendance import validate_attendance
 
 router = APIRouter()
@@ -283,8 +283,8 @@ async def parse_endpoint(request: ParseRequest) -> ParseResponse:
         zoom_session = await asyncio.to_thread(
             parse_zoom_attendance, request.zoom_path,
         )
-        ce_requests_raw = await asyncio.to_thread(
-            parse_qualtrics_export, request.qualtrics_path,
+        ce_requests_raw = dedupe_requests(
+            await asyncio.to_thread(parse_qualtrics_export, request.qualtrics_path),
         )
         zoom_host = await asyncio.to_thread(extract_zoom_host, request.zoom_path)
     except FileNotFoundError as exc:

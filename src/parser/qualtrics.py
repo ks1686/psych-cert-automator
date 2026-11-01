@@ -9,7 +9,8 @@ type columns.
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
+from datetime import datetime
 from enum import StrEnum, auto, unique
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -31,6 +32,8 @@ _LICENSE_KW: tuple[str, ...] = (
 )
 _NAME_KW: tuple[str, ...] = ("name (as you would like", "name on certificate")
 _EMAIL_KW: tuple[str, ...] = ("preferred email",)
+_SUBMITTED_HEADERS: tuple[str, ...] = ("recorded date", "recordeddate", "end date", "enddate")
+"""Submission-time columns, best first (Recorded Date, then End Date)."""
 _LICENSE_PROMPT_RE: re.Pattern[str] = re.compile(
     r"\([^)]*(?:license|certificate|enter|#)[^)]*\)", re.IGNORECASE,
 )
@@ -119,6 +122,8 @@ class _ColumnLayout:
     license_cols: dict[str, int]
     # In checkbox format: list of (ce_type_name, column_index).
     ce_checkbox_cols: list[tuple[str, int]]
+    # Submission time column (Recorded Date or End Date), if present.
+    submitted_col: int | None = None
 
 
 def _detect_columns(headers: list[str]) -> _ColumnLayout:
@@ -161,7 +166,17 @@ def _detect_columns(headers: list[str]) -> _ColumnLayout:
         main_ce_col=main_ce_col,
         license_cols=license_cols,
         ce_checkbox_cols=ce_checkbox_cols,
+        submitted_col=_find_exact(headers, _SUBMITTED_HEADERS),
     )
+
+
+def _find_exact(headers: list[str], names: tuple[str, ...]) -> int | None:
+    """Return the first column whose whole header equals one of *names*."""
+    lowered = [(raw or "").strip().lower() for raw in headers]
+    for name in names:
+        if name in lowered:
+            return lowered.index(name)
+    return None
 
 
 def _scan_ce_column(
@@ -205,6 +220,19 @@ def _cell_str(value: object) -> str | None:
     return str(value).strip() or None
 
 
+def _cell_datetime(value: object) -> datetime | None:
+    """Read a submission time from a datetime cell or an ISO-like string."""
+    if isinstance(value, datetime):
+        return value
+    text = _cell_str(value)
+    if text is None:
+        return None
+    try:
+        return datetime.fromisoformat(text)
+    except ValueError:
+        return None
+
+
 def _split_ce_types(raw: str) -> list[str]:
     """Split comma-separated CE type selection into individual types."""
     return [t.strip() for t in raw.split(",") if t.strip()]
@@ -223,14 +251,21 @@ def _parse_row(
         return
 
     email = _cell_str(row_values[layout.email_col])
+    submitted_at = (
+        _cell_datetime(row_values[layout.submitted_col])
+        if layout.submitted_col is not None and layout.submitted_col < len(row_values)
+        else None
+    )
 
     match layout:
         case _ColumnLayout(main_ce_col=int(ce_col)) if ce_col >= 0:
             raw_ce = _cell_str(row_values[ce_col])
             if raw_ce:
-                yield from _from_selection(name, email, raw_ce, layout, row_values)
+                for request in _from_selection(name, email, raw_ce, layout, row_values):
+                    yield replace(request, submitted_at=submitted_at)
         case _ColumnLayout(ce_checkbox_cols=cols) if cols:
-            yield from _from_checkboxes(name, email, row_values, cols, layout)
+            for request in _from_checkboxes(name, email, row_values, cols, layout):
+                yield replace(request, submitted_at=submitted_at)
         case _:
             return
 

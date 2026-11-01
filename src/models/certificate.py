@@ -8,7 +8,7 @@ from enum import StrEnum, unique
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from datetime import date
+    from datetime import date, datetime
 
     from src.models.training import CEType
 
@@ -60,6 +60,9 @@ class CERequest:
 
     license_number: str | None
     """License or certificate number, required by some CE types."""
+
+    submitted_at: datetime | None = None
+    """When the survey response was recorded, if the export has that column."""
 
 
 @dataclass(frozen=True, slots=True)
