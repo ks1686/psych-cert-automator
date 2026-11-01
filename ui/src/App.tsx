@@ -292,7 +292,8 @@ function WizardApp() {
         throw new Error(`Server returned ${response.status}: ${text}`);
       }
 
-      const body: { matches: MatchEntryWire[] } = await response.json();
+      const body: { matches: MatchEntryWire[]; warnings?: string[] } =
+        await response.json();
 
       const matchData: MatchData = {
         matches: body.matches,
@@ -306,6 +307,7 @@ function WizardApp() {
         endTime,
         zoomHost: data.zoomHost,
         zoomPath: data.zoomPath,
+        warnings: body.warnings ?? [],
       };
 
       setWizardState((prev) => ({ ...prev, matchData }));

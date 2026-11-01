@@ -87,6 +87,8 @@ export interface MatchData {
   zoomHost: string | null;
   /** Absolute path to the Zoom workbook — used for full-segment attendance. */
   zoomPath: string;
+  /** Server notes for the reviewer (for example the meeting ended early). */
+  warnings?: string[];
 }
 
 // ── Props ───────────────────────────────────────────────────────────────────
@@ -278,6 +280,7 @@ export default function StepMatchReview({
       endTime: initialData.endTime,
       zoomHost: initialData.zoomHost,
       zoomPath: initialData.zoomPath,
+      warnings: initialData.warnings,
     }),
     [overrides, excluded, initialData],
   );
@@ -486,6 +489,18 @@ export default function StepMatchReview({
               </span>
             )}
           </div>
+
+          {/* ── Session window warnings ──────────────────────────────── */}
+          {(initialData.warnings ?? []).map((warning) => (
+            <div
+              key={warning}
+              role="status"
+              className="flex items-start gap-2 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-700 dark:bg-amber-950 dark:text-amber-100"
+            >
+              <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+              <span>{warning}</span>
+            </div>
+          ))}
 
           {/* ── Error banner ─────────────────────────────────────────── */}
           {error && (

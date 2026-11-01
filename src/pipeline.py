@@ -145,22 +145,66 @@ def session_window(
     start_time: time | None,
     end_time: time | None,
 ) -> tuple[datetime, datetime]:
-    """Return the window attendance is judged against.
+    """Return the window attendance is judged against (see ``judged_window``)."""
+    start, end, _ = judged_window(meeting_start, meeting_end, start_time, end_time)
+    return start, end
 
-    The entered session times win over the Zoom meeting start/end, because
-    hosts often open the meeting early and close it late. The entered times
-    are placed on the Zoom meeting's date (so multi-day events use the date of
-    the uploaded report). An end time at or before the start rolls to the
-    next day. Without entered times the Zoom meeting window is used.
+
+def judged_window(
+    meeting_start: datetime,
+    meeting_end: datetime,
+    start_time: time | None,
+    end_time: time | None,
+    *,
+    clip_to_meeting: bool = True,
+) -> tuple[datetime, datetime, str | None]:
+    """Return the attendance window and a warning when Zoom and the entry disagree.
+
+    The window is the overlap of the entered session times and the Zoom
+    meeting. Hosts often open the meeting early and close it late, so the
+    entered times usually win. When the Zoom meeting started after the
+    entered start or ended before the entered end (for example it ended at
+    11:40 for a 9:00 to 12:00 session), nobody could attend the missing part,
+    so only the overlap is judged and a warning says so.
+
+    The entered times are placed on the Zoom meeting's date (multi-day events
+    use the date of the uploaded report). An end time at or before the start
+    rolls to the next day. Without entered times the Zoom meeting window is
+    used. ``clip_to_meeting=False`` skips the overlap for callers whose
+    "meeting" window is only a guess. If the two windows do not overlap at
+    all, the entered times are used and the warning says so.
     """
     if start_time is None or end_time is None:
-        return meeting_start, meeting_end
+        return meeting_start, meeting_end, None
     day = meeting_start.date()
-    start = datetime.combine(day, start_time, tzinfo=meeting_start.tzinfo)
-    end = datetime.combine(day, end_time, tzinfo=meeting_start.tzinfo)
+    entered_start = datetime.combine(day, start_time, tzinfo=meeting_start.tzinfo)
+    entered_end = datetime.combine(day, end_time, tzinfo=meeting_start.tzinfo)
+    if entered_end <= entered_start:
+        entered_end += timedelta(days=1)
+    if not clip_to_meeting:
+        return entered_start, entered_end, None
+
+    start = max(entered_start, meeting_start)
+    end = min(entered_end, meeting_end)
+    if (start, end) == (entered_start, entered_end):
+        return start, end, None
+
+    zoom_text = f"{meeting_start:%H:%M} to {meeting_end:%H:%M}"
+    entered_text = f"{entered_start:%H:%M} to {entered_end:%H:%M}"
     if end <= start:
-        end += timedelta(days=1)
-    return start, end
+        return (
+            entered_start,
+            entered_end,
+            f"The Zoom meeting ran {zoom_text}, which does not overlap the session "
+            f"entered as {entered_text}. Attendance was judged from {entered_text}; "
+            "check the session date and times.",
+        )
+    return (
+        start,
+        end,
+        f"The Zoom meeting ran {zoom_text}, but the session was entered as "
+        f"{entered_text}. Attendance was judged from {start:%H:%M} to {end:%H:%M}.",
+    )
 
 
 # ── Public entry point ─────────────────────────────────────────────────────────────
@@ -270,7 +314,7 @@ def run_pipeline(  # noqa: PLR0913
             manual_overrides,
         )
 
-        window_start, window_end = session_window(
+        window_start, window_end, window_warning = judged_window(
             zoom_session.session_start,
             zoom_session.session_end,
             start_time,
@@ -316,9 +360,12 @@ def run_pipeline(  # noqa: PLR0913
             errors=errors,
             generated_paths=generated_paths,
             warnings=[
-                warning
-                for cert, path in zip(eligible, generated_paths, strict=False)
-                for warning in certificate_warnings(cert, path)
+                *([window_warning] if window_warning else []),
+                *(
+                    warning
+                    for cert, path in zip(eligible, generated_paths, strict=False)
+                    for warning in certificate_warnings(cert, path)
+                ),
             ],
         )
 

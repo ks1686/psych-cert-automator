@@ -38,7 +38,7 @@ from src.models.training import CEType
 from src.parser.qualtrics import parse_qualtrics_export
 from src.parser.tabular import UnreadableFileError
 from src.parser.zoom import ZoomParseError, parse_zoom_attendance
-from src.pipeline import PipelineResult, dedupe_requests, run_pipeline, session_window
+from src.pipeline import PipelineResult, dedupe_requests, judged_window, run_pipeline
 from src.validator.attendance import validate_attendance
 
 router = APIRouter()
@@ -147,6 +147,9 @@ class MatchResponse(BaseModel):
     """Response for ``POST /api/match``."""
 
     matches: list[MatchEntry]
+    # Notes for the reviewer, such as the Zoom meeting ending before the
+    # entered session end.
+    warnings: list[str] = []
 
 
 class PreviewRequest(BaseModel):
@@ -381,8 +384,14 @@ async def match_endpoint(request: MatchRequest) -> MatchResponse:
         participants = [_participant_from_brief(p) for p in request.zoom_participants]
         session_start = request.session_start or min(p.first_join for p in participants)
         session_end = request.session_end or max(p.last_leave for p in participants)
-    session_start, session_end = session_window(
-        session_start, session_end, request.start_time, request.end_time,
+    # The Zoom meeting window is real when it comes from the file or the UI;
+    # a window guessed from participant join times is not clipped against.
+    session_start, session_end, window_warning = judged_window(
+        session_start,
+        session_end,
+        request.start_time,
+        request.end_time,
+        clip_to_meeting=bool(request.zoom_path or (request.session_start and request.session_end)),
     )
 
     zoom_lookup: dict[str, ParticipantAttendance] = {}
@@ -451,7 +460,7 @@ async def match_endpoint(request: MatchRequest) -> MatchResponse:
             case _:
                 assert_never(match_result)
 
-    return MatchResponse(matches=entries)
+    return MatchResponse(matches=entries, warnings=[window_warning] if window_warning else [])
 
 
 @router.post("/preview")
