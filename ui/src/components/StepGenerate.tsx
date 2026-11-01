@@ -278,7 +278,11 @@ export default function StepGenerate({
     try {
       await openPath(outputDir);
     } catch {
-      setGenError("Could not open the output folder in the file manager.");
+      // The opener is scoped to the home, Downloads, Documents, and Desktop
+      // folders (src-tauri/capabilities/default.json).
+      setGenError(
+        `Could not open the output folder in the file manager. Open it yourself: ${outputDir}`,
+      );
     }
   }, [outputDir]);
 

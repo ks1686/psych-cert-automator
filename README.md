@@ -50,9 +50,9 @@ Download the latest installer from [Releases](https://github.com/ks1686/psych-ce
 | Windows | `.msi` |
 | Linux | `.deb` |
 
-Release builds run on pushes to `main` and on `v*` tags. macOS release builds are signed with Developer ID and notarized when the Apple secrets are present. A local `bun run tauri build` stays unsigned: `signingIdentity` in `src-tauri/tauri.conf.json` is null. The published Linux artifact is the `.deb`. The Tauri bundle list also names `rpm`, but the release workflow uploads the `.deb`.
+Release builds run on pushes to `main` and on `v*` tags. macOS release builds are signed with Developer ID and notarized when the Apple secrets are present. A local `bun run tauri build` stays unsigned: `signingIdentity` in `src-tauri/tauri.conf.json` is null. Windows `.msi` builds are not code-signed yet, so SmartScreen warns on first run until a signing certificate is added to the release workflow. The published Linux artifact is the `.deb`. The Tauri bundle list also names `rpm`, but the release workflow uploads the `.deb`.
 
-The app is offline. Its Python sidecar listens on `http://127.0.0.1:8008`.
+The app is offline. The desktop app starts its Python sidecar on a random free port on `127.0.0.1` with a random token generated for that launch; every API request must carry the token. Run on its own (`uv run python src/backends/main.py`), the sidecar listens on `http://127.0.0.1:8008` without a token, for development and the browser e2e tests.
 
 The wizard has four steps: upload the two workbooks, enter the session, review matches, then generate. Session metadata can be saved as JSON under `~/.psych-cert-gen/sessions` through `POST /api/sessions`. There is no separate CLI config file. The CLI flags are the script interface, and that JSON API is the saved-session interface.
 
@@ -104,7 +104,7 @@ A Qualtrics row with an empty name or an empty CE type is skipped by the parser.
 | --- | --- | --- |
 | Python | 3.12+ | [python.org](https://www.python.org/downloads/) |
 | uv | latest | see uv docs |
-| Rust | 1.80+ | [rustup](https://rustup.rs/) |
+| Rust | 1.87+ (locked dependencies such as `zvariant_utils` need it) | [rustup](https://rustup.rs/) |
 | Bun | 1.3+ | [bun.sh](https://bun.sh/) |
 | poppler | 24.02 for golden tests | `poppler-utils` (`pdftoppm`, `pdftotext`, `pdfinfo`, `pdffonts`) |
 
