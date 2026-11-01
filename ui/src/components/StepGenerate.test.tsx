@@ -250,3 +250,57 @@ test("surfaces generation HTTP errors instead of empty success", async () => {
     screen.getByRole("button", { name: /Generate All Certificates/i }),
   ).toBeEnabled();
 });
+
+test("counts only the requests of the matched person when two people share a name", () => {
+  const attended = matchData.matches[0].attendance;
+  render(
+    <StepGenerate
+      onBack={vi.fn()}
+      onReset={vi.fn()}
+      matchData={{
+        ...matchData,
+        matches: [
+          {
+            kind: "success",
+            qualtrics_name: "Chris Park",
+            zoom_name: "Chris Park (chris.p1@example.test)",
+            confidence: 1,
+            candidates: null,
+            attendance: attended,
+            request_indices: [0],
+          },
+          {
+            kind: "success",
+            qualtrics_name: "Chris Park",
+            zoom_name: "Chris Park (chris.p2@example.test)",
+            confidence: 1,
+            candidates: null,
+            attendance: attended && {
+              ...attended,
+              is_eligible: false,
+              failure_reason: "Left early",
+            },
+            request_indices: [1],
+          },
+        ],
+        ceRequests: [
+          {
+            name_on_certificate: "Chris Park",
+            email: "chris.p1@example.test",
+            ce_type: "APA",
+            license_number: null,
+          },
+          {
+            name_on_certificate: "Chris Park",
+            email: "chris.p2@example.test",
+            ce_type: "APA",
+            license_number: null,
+          },
+        ],
+      }}
+      trainingMetadata={trainingMetadata}
+      uploadData={uploadData}
+    />,
+  );
+  expect(screen.getByText("1 eligible certificate ready to generate.")).toBeInTheDocument();
+});
