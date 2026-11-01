@@ -25,7 +25,6 @@ from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
 
 from src.generator.certificate import CertificateRenderOptions, generate_certificate
-from src.generator.zoom_host import extract_zoom_host
 from src.matcher.name_matcher import CONFIRMED_CONFIDENCE, match_participants
 from src.models.certificate import (
     CertificateOutput,
@@ -286,7 +285,6 @@ async def parse_endpoint(request: ParseRequest) -> ParseResponse:
         ce_requests_raw = dedupe_requests(
             await asyncio.to_thread(parse_qualtrics_export, request.qualtrics_path),
         )
-        zoom_host = await asyncio.to_thread(extract_zoom_host, request.zoom_path)
     except FileNotFoundError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except ZoomParseError as exc:
@@ -327,7 +325,7 @@ async def parse_endpoint(request: ParseRequest) -> ParseResponse:
         ce_requests=ce_requests,
         participant_count=len(participants),
         request_count=len(ce_requests),
-        zoom_host=zoom_host,
+        zoom_host=zoom_session.host,
     )
 
 

@@ -18,10 +18,9 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
-from openpyxl import load_workbook
-
 from src.models.certificate import CERequest
 from src.models.training import CEType
+from src.parser.tabular import read_rows
 
 # ── Column detection constants ─────────────────────────────────────────────
 
@@ -335,7 +334,8 @@ def parse_qualtrics_export(filepath: str) -> list[CERequest]:
     ``CERequest`` entries, one per CE type per person.
 
     Args:
-        filepath: Path to a ``.xlsx`` file exported from Qualtrics.
+        filepath: Path to a ``.xlsx`` or ``.csv`` file exported from Qualtrics
+            (one label row, or the three header rows of the API/CSV export).
 
     Returns:
         One ``CERequest`` per person per CE type.
@@ -349,24 +349,52 @@ def parse_qualtrics_export(filepath: str) -> list[CERequest]:
         msg = f"Qualtrics export not found: {filepath}"
         raise FileNotFoundError(msg)
 
-    wb = load_workbook(path, read_only=True, data_only=True)
-    try:
-        ws = wb.active
-        if ws is None:
-            msg = f"No active worksheet in {filepath}"
-            raise ValueError(msg)
+    rows = read_rows(filepath)
+    header_idx = _find_header_row(rows)
+    if header_idx is None:
+        msg = f"Missing name column (keywords: {_NAME_KW})"
+        raise ValueError(msg)
+    headers = [str(cell) if cell is not None else "" for cell in rows[header_idx]]
+    layout = _detect_columns(headers)
+    finished_col = _find_exact(headers, ("finished",))
 
-        headers: list[str] = [
-            str(cell.value) if cell.value is not None else ""
-            for cell in next(ws.iter_rows(min_row=1, max_row=1))
-        ]
-        layout = _detect_columns(headers)
+    requests: list[CERequest] = []
+    for row in rows[header_idx + 1 :]:
+        row_values: list[object] = list(row)
+        if len(row_values) < len(headers):
+            row_values.extend([None] * (len(headers) - len(row_values)))
+        if _is_import_id_row(row_values) or _is_unfinished(row_values, finished_col):
+            continue
+        requests.extend(_parse_row(row_values, layout))
 
-        requests: list[CERequest] = []
-        for row in ws.iter_rows(min_row=2, values_only=True):
-            row_values: list[object] = list(row)
-            requests.extend(_parse_row(row_values, layout))
+    return requests
 
-        return requests
-    finally:
-        wb.close()
+
+_HEADER_SCAN_ROWS = 10
+
+
+def _find_header_row(rows: list[tuple[object, ...]]) -> int | None:
+    """Return the row with the question labels.
+
+    Qualtrics API/CSV exports put short codes (Q1, Q2...) in row 1, the
+    question labels in row 2, and ``{"ImportId": ...}`` JSON in row 3, so
+    the header is located by keyword rather than assumed to be row 1.
+    """
+    for i, row in enumerate(rows[:_HEADER_SCAN_ROWS]):
+        if any(_contains(str(cell or ""), _NAME_KW) for cell in row):
+            return i
+    return None
+
+
+def _is_import_id_row(row_values: list[object]) -> bool:
+    return any(str(cell or "").lstrip().startswith('{"ImportId"') for cell in row_values)
+
+
+def _is_unfinished(row_values: list[object], finished_col: int | None) -> bool:
+    """True for partial responses (Qualtrics Finished = False / 0)."""
+    if finished_col is None:
+        return False
+    value = row_values[finished_col]
+    if isinstance(value, bool):
+        return not value
+    return str(value).strip().lower() in {"false", "0", "0.0"} if value is not None else False
