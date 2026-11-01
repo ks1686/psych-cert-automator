@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import re
+import zlib
 from dataclasses import dataclass
 from datetime import date, time
 from pathlib import Path
@@ -112,6 +113,9 @@ def generate_certificate(
 
 
 _PAGE_OBJECT = re.compile(rb"/Type\s*/Page(?![a-zA-Z])")
+_OBJECT_STREAM = re.compile(
+    rb"<<(?:(?!>>).)*?/Type\s*/ObjStm(?:(?!>>).)*?>>\s*stream\r?\n", re.DOTALL
+)
 _PAGES_COUNT = re.compile(
     rb"/Type\s*/Pages\b[^>]*?/Count\s+(\d+)|/Count\s+(\d+)[^>]*?/Type\s*/Pages\b"
 )
@@ -137,11 +141,30 @@ def pdf_page_count(pdf_path: Path) -> int | None:
         data = pdf_path.read_bytes()
     except OSError:
         return None
+    # PDF 1.5+ writers may pack the page objects into compressed object
+    # streams, so search their contents too.
+    data += b"".join(_object_stream_contents(data))
     pages = len(_PAGE_OBJECT.findall(data))
     if pages:
         return pages
     counts = [int(a or b) for a, b in _PAGES_COUNT.findall(data)]
     return max(counts) if counts else None
+
+
+def _object_stream_contents(data: bytes) -> list[bytes]:
+    """Inflate every Flate-compressed /ObjStm stream (others are skipped)."""
+    contents: list[bytes] = []
+    for match in _OBJECT_STREAM.finditer(data):
+        if b"FlateDecode" not in match.group(0):
+            continue
+        end = data.find(b"endstream", match.end())
+        if end == -1:
+            continue
+        try:
+            contents.append(zlib.decompressobj().decompress(data[match.end() : end]))
+        except zlib.error:
+            continue
+    return contents
 
 
 def _unsupported_characters(text: str) -> str:
