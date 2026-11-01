@@ -211,6 +211,21 @@ function deriveIneligibleEntries(
 
 // ── Component ───────────────────────────────────────────────────────────────
 
+/** Response header the API uses for preview warnings (a JSON string list). */
+const PREVIEW_WARNINGS_HEADER = "X-Certificate-Warnings";
+
+function parsePreviewWarnings(header: string | null): string[] {
+  if (!header) return [];
+  try {
+    const parsed: unknown = JSON.parse(header);
+    return Array.isArray(parsed)
+      ? parsed.filter((item): item is string => typeof item === "string")
+      : [];
+  } catch {
+    return [];
+  }
+}
+
 export default function StepGenerate({
   onBack,
   onReset,
@@ -240,6 +255,7 @@ export default function StepGenerate({
     null,
   );
   const [previewError, setPreviewError] = useState<string | null>(null);
+  const [previewWarnings, setPreviewWarnings] = useState<string[]>([]);
 
   // ── Generation state ─────────────────────────────────────────────────────
 
@@ -303,6 +319,7 @@ export default function StepGenerate({
     setPhase("previewing");
     setPreviewError(null);
     setPreviewPdfBytes(null);
+    setPreviewWarnings([]);
 
     try {
       const first = eligibleEntries[0];
@@ -332,6 +349,9 @@ export default function StepGenerate({
       }
 
       const contentType = response.headers.get("content-type") ?? "";
+      setPreviewWarnings(
+        parsePreviewWarnings(response.headers.get(PREVIEW_WARNINGS_HEADER)),
+      );
       const buffer = await response.arrayBuffer();
       setPreviewIsPdf(contentType.includes("pdf"));
       setPreviewPdfBytes(new Uint8Array(buffer));
@@ -514,6 +534,19 @@ export default function StepGenerate({
               </Button>
             </div>
 
+            {previewWarnings.length > 0 && (
+              <div
+                role="status"
+                className="rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900"
+              >
+                <p className="font-medium">Check this preview before generating:</p>
+                <ul className="mt-1 list-disc pl-5">
+                  {previewWarnings.map((warning) => (
+                    <li key={warning}>{warning}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
             {previewPdfBytes && previewIsPdf && (
               <div className="rounded-md border bg-muted/20 p-2">
                 <PdfPreview pdfBytes={previewPdfBytes} />

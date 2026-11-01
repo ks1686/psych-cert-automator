@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import io
+import json
 import secrets
 import tempfile
 import zipfile
@@ -24,7 +25,11 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
 
-from src.generator.certificate import CertificateRenderOptions, generate_certificate
+from src.generator.certificate import (
+    CertificateRenderOptions,
+    certificate_warnings,
+    generate_certificate,
+)
 from src.matcher.name_matcher import CONFIRMED_CONFIDENCE, match_requests, person_groups
 from src.models.certificate import (
     CertificateOutput,
@@ -463,6 +468,10 @@ async def match_endpoint(request: MatchRequest) -> MatchResponse:
     return MatchResponse(matches=entries, warnings=[window_warning] if window_warning else [])
 
 
+PREVIEW_WARNINGS_HEADER = "X-Certificate-Warnings"
+"""Response header carrying a JSON list of preview warnings, when any."""
+
+
 @router.post("/preview")
 async def preview_endpoint(request: PreviewRequest) -> StreamingResponse:
     """Generate a single certificate preview from the official Word template.
@@ -474,23 +483,23 @@ async def preview_endpoint(request: PreviewRequest) -> StreamingResponse:
     # for evening sessions in the US).
     issue_date = request.issue_date or date.today()  # noqa: DTZ011
 
-    file_bytes, media_type, filename = await asyncio.to_thread(
+    file_bytes, media_type, filename, warnings = await asyncio.to_thread(
         _build_preview_certificate,
         request,
         issue_date,
     )
 
-    return StreamingResponse(
-        io.BytesIO(file_bytes),
-        media_type=media_type,
-        headers={"Content-Disposition": f"inline; filename={filename}"},
-    )
+    headers = {"Content-Disposition": f"inline; filename={filename}"}
+    if warnings:
+        # ASCII-only JSON so names in any script survive the HTTP header.
+        headers[PREVIEW_WARNINGS_HEADER] = json.dumps(warnings, ensure_ascii=True)
+    return StreamingResponse(io.BytesIO(file_bytes), media_type=media_type, headers=headers)
 
 
 def _build_preview_certificate(
     request: PreviewRequest,
     issue_date: date,
-) -> tuple[bytes, str, str]:
+) -> tuple[bytes, str, str, list[str]]:
     output = CertificateOutput(
         full_name=request.full_name,
         ce_type=CEType(request.ce_type),
@@ -511,13 +520,14 @@ def _build_preview_certificate(
     with tempfile.TemporaryDirectory() as tmp:
         path = Path(generate_certificate(output, tmp, options=options))
         data = path.read_bytes()
-        suffix = path.suffix.lower()
-        if suffix == ".pdf":
-            return data, "application/pdf", path.name
+        warnings = certificate_warnings(output, str(path))
+        if path.suffix.lower() == ".pdf":
+            return data, "application/pdf", path.name, warnings
         return (
             data,
             "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
             path.name,
+            warnings,
         )
 
 

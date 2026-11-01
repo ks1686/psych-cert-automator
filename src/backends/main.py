@@ -34,7 +34,7 @@ from fastapi.responses import JSONResponse  # noqa: E402
 from pydantic import BaseModel  # noqa: E402
 from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint  # noqa: E402
 
-from src.backends.routes import router  # noqa: E402
+from src.backends.routes import PREVIEW_WARNINGS_HEADER, router  # noqa: E402
 from src.models.credits import CECredits  # noqa: E402, TC001 (pydantic needs it at runtime)
 from src.models.session import SessionConfig  # noqa: E402
 from src.models.training import TrainingConfigError, TrainingMetadata  # noqa: E402
@@ -111,6 +111,8 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    # The UI shows preview warnings (fonts, page count) from this header.
+    expose_headers=[PREVIEW_WARNINGS_HEADER],
 )
 
 app.include_router(router, prefix="/api")
