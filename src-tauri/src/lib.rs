@@ -15,22 +15,48 @@ const STDERR_TAIL_LINES: usize = 20;
 /// Header the sidecar checks on every request (see src/backends/main.py).
 const TOKEN_HEADER: &str = "X-Psych-Cert-Token";
 
-/// Port used only if the OS refuses to hand out a free one.
+/// Port used if the OS refuses to hand out a free one, and the fixed port
+/// debug builds (`bun run tauri dev`) use so a separately started API
+/// (`uv run python src/backends/main.py`) is reachable.
 const FALLBACK_PORT: u16 = 8008;
+
+/// Fixed token for debug builds only. Release builds always use a random one.
+const DEV_TOKEN: &str = "psych-cert-dev";
+
+/// Placeholder in tauri.conf.json's CSP that is narrowed to the real port.
+const CSP_ANY_LOCAL_PORT: &str = "http://127.0.0.1:*";
 
 /// Per-launch connection details for the Python sidecar.
 ///
-/// A fresh random port and a 256-bit random token are chosen on every launch.
-/// The sidecar receives them through environment variables and rejects any
-/// request without the token, so other local processes and web pages cannot
-/// drive the API. The webview reads them through the `backend_config` command.
-#[derive(Clone, serde::Serialize)]
+/// Release builds choose a fresh random port and a 256-bit random token on
+/// every launch. Debug builds use port 8008 and the token `psych-cert-dev`
+/// (override with PSYCH_CERT_DEV_PORT and PSYCH_CERT_DEV_TOKEN) so the
+/// README's two-terminal dev setup can connect. The sidecar receives them
+/// through environment variables and rejects any request without the token,
+/// so other local processes and web pages cannot drive the API. The webview
+/// reads them through the `backend_config` command.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
 pub struct BackendConfig {
     port: u16,
     token: String,
 }
 
 impl BackendConfig {
+    /// Fixed settings for debug builds, random ones for release builds.
+    fn for_build(debug: bool, env: impl Fn(&str) -> Option<String>) -> Self {
+        if !debug {
+            return Self::generate();
+        }
+        let port = env("PSYCH_CERT_DEV_PORT")
+            .and_then(|raw| raw.trim().parse().ok())
+            .unwrap_or(FALLBACK_PORT);
+        let token = env("PSYCH_CERT_DEV_TOKEN")
+            .map(|raw| raw.trim().to_string())
+            .filter(|raw| !raw.is_empty())
+            .unwrap_or_else(|| DEV_TOKEN.to_string());
+        Self { port, token }
+    }
+
     fn generate() -> Self {
         let port = std::net::TcpListener::bind("127.0.0.1:0")
             .and_then(|listener| listener.local_addr())
@@ -45,6 +71,22 @@ impl BackendConfig {
     fn url(&self, path: &str) -> String {
         format!("http://127.0.0.1:{}{}", self.port, path)
     }
+
+    /// True when an API answering with this token is already listening
+    /// (the README's dev setup starts one in another terminal).
+    fn already_running(&self) -> bool {
+        ureq::get(&self.url("/health"))
+            .set(TOKEN_HEADER, &self.token)
+            .timeout(std::time::Duration::from_millis(500))
+            .call()
+            .map(|r| r.status() == 200)
+            .unwrap_or(false)
+    }
+}
+
+/// Narrow the CSP's `http://127.0.0.1:*` to the one port the API uses.
+fn pin_csp_port(csp: &str, port: u16) -> String {
+    csp.replace(CSP_ANY_LOCAL_PORT, &format!("http://127.0.0.1:{port}"))
 }
 
 /// Hand the sidecar port and token to the frontend.
@@ -57,8 +99,17 @@ fn backend_config(config: tauri::State<'_, BackendConfig>) -> BackendConfig {
 pub fn run() {
     let sidecar: SidecarHandle = Arc::new(Mutex::new(None));
     let sidecar_for_setup = sidecar.clone();
-    let config = BackendConfig::generate();
+    let config = BackendConfig::for_build(cfg!(debug_assertions), |key| std::env::var(key).ok());
     let config_for_setup = config.clone();
+
+    // Tauri injects this CSP into every page it serves at runtime, so the
+    // webview can only reach the API on this launch's port.
+    let mut context = tauri::generate_context!();
+    let security = &mut context.config_mut().app.security;
+    if let Some(csp) = security.csp.as_ref() {
+        let pinned = pin_csp_port(&csp.to_string(), config.port);
+        security.csp = Some(tauri::utils::config::Csp::Policy(pinned));
+    }
 
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
@@ -68,7 +119,16 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![backend_config])
         .setup(move |app| {
             let handle = app.handle().clone();
-            spawn_sidecar(&handle, &sidecar_for_setup, &config_for_setup);
+            if cfg!(debug_assertions) && config_for_setup.already_running() {
+                // Dev: reuse the API started in another terminal.
+                eprintln!(
+                    "[sidecar] using the API already running on port {}",
+                    config_for_setup.port
+                );
+                watch_health(&handle, &config_for_setup, Arc::new(AtomicBool::new(false)));
+            } else {
+                spawn_sidecar(&handle, &sidecar_for_setup, &config_for_setup);
+            }
             let retry_handle = handle.clone();
             let retry_sidecar = sidecar_for_setup.clone();
             let retry_config = config_for_setup.clone();
@@ -77,7 +137,7 @@ pub fn run() {
             });
             Ok(())
         })
-        .build(tauri::generate_context!())
+        .build(context)
         .expect("error while building tauri application")
         .run({
             let sidecar = sidecar.clone();
@@ -207,6 +267,14 @@ fn spawn_sidecar(handle: &tauri::AppHandle, sidecar: &SidecarHandle, config: &Ba
     });
 
     // ── health-check polling ────────────────────────────────────────────
+    watch_health(handle, config, became_healthy);
+}
+
+fn watch_health(
+    handle: &tauri::AppHandle,
+    config: &BackendConfig,
+    became_healthy: Arc<AtomicBool>,
+) {
     let hc_handle = handle.clone();
     let hc_config = config.clone();
     tauri::async_runtime::spawn(async move {
@@ -308,6 +376,10 @@ async fn poll_health(
 /// 2. Wait up to 2 seconds for the process to exit on its own.
 /// 3. Force-kill the process if it is still running (fallback).
 fn shutdown_sidecar(sidecar: &SidecarHandle, config: &BackendConfig) {
+    // Never stop an API this app did not start (the dev setup's terminal).
+    if sidecar.lock().unwrap().is_none() {
+        return;
+    }
     // Primary: HTTP graceful shutdown
     let _ = ureq::post(&config.url("/shutdown"))
         .set(TOKEN_HEADER, &config.token)

@@ -1,8 +1,9 @@
 /**
  * Shared API client for the FastAPI sidecar.
  *
- * In the desktop app the Tauri shell starts the sidecar on a random free port
- * with a per-launch random token, and exposes both through the
+ * In a release build the Tauri shell starts the sidecar on a random free port
+ * with a per-launch random token; a debug build (`bun run tauri dev`) uses
+ * port 8008 and the token "psych-cert-dev". Both are exposed through the
  * `backend_config` command. Every request must send the token in the
  * X-Psych-Cert-Token header (or, for plain links, the `auth` query param).
  * Outside Tauri (Vite dev server, browser e2e, Vitest) the backend runs on the

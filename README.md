@@ -115,12 +115,23 @@ Frontend packages use Bun, not npm or pnpm.
 uv sync
 bun install
 
-# Terminal 1: API at http://localhost:8008
+# Terminal 1: API at http://127.0.0.1:8008 (no token: development mode)
 uv run python src/backends/main.py
 
 # Terminal 2: desktop app with hot reload
 bun run tauri dev
 ```
+
+Debug builds (`tauri dev`) always talk to port 8008 with the token
+`psych-cert-dev`, so they find the API from terminal 1 and leave it running
+when the window closes. If nothing is listening on 8008 they start the
+bundled sidecar there instead. Set `PSYCH_CERT_DEV_PORT` or
+`PSYCH_CERT_DEV_TOKEN` to change either value (start the API with the same
+`PSYCH_CERT_PORT` and `PSYCH_CERT_TOKEN`). Release builds ignore all of this
+and pick a random port and token on every launch.
+
+The Tauri window needs a desktop session with WebKitGTK (Linux), WebView2
+(Windows), or macOS; it cannot run on a headless server.
 
 ### Tests
 
