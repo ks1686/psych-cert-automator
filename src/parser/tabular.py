@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import csv
 import zipfile
+import zlib
 from pathlib import Path
 
 import openpyxl
@@ -13,6 +14,21 @@ _EXCEL_SUFFIXES = frozenset({".xlsx", ".xlsm"})
 _CSV_SUFFIXES = frozenset({".csv"})
 
 Row = tuple[object, ...]
+
+# What openpyxl can raise for a damaged workbook: a bad zip container, a
+# missing part, truncated or invalid XML (ElementTree and lxml both raise
+# SyntaxError subclasses), or a corrupt compressed stream.
+_DAMAGED_WORKBOOK_ERRORS = (
+    InvalidFileException,
+    zipfile.BadZipFile,
+    KeyError,
+    OSError,
+    EOFError,
+    SyntaxError,
+    ValueError,
+    TypeError,
+    zlib.error,
+)
 
 
 class UnreadableFileError(ValueError):
@@ -45,7 +61,7 @@ def read_rows(filepath: str) -> list[Row]:
 def _read_xlsx(path: Path) -> list[Row]:
     try:
         workbook = openpyxl.load_workbook(path, read_only=True, data_only=True)
-    except (InvalidFileException, zipfile.BadZipFile, KeyError, OSError) as exc:
+    except _DAMAGED_WORKBOOK_ERRORS as exc:
         msg = f"Could not read {path.name}: it is not a valid Excel .xlsx file."
         raise UnreadableFileError(msg) from exc
     try:
@@ -53,7 +69,14 @@ def _read_xlsx(path: Path) -> list[Row]:
         if sheet is None:
             msg = f"Could not read {path.name}: the workbook has no worksheet."
             raise UnreadableFileError(msg)
+        # read_only sheets parse lazily, so damage inside the sheet XML only
+        # shows up while iterating.
         return [tuple(row) for row in sheet.iter_rows(values_only=True)]
+    except UnreadableFileError:
+        raise
+    except _DAMAGED_WORKBOOK_ERRORS as exc:
+        msg = f"Could not read {path.name}: the Excel file is damaged or incomplete."
+        raise UnreadableFileError(msg) from exc
     finally:
         workbook.close()
 
