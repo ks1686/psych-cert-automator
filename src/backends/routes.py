@@ -25,7 +25,7 @@ from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
 
 from src.generator.certificate import CertificateRenderOptions, generate_certificate
-from src.matcher.name_matcher import CONFIRMED_CONFIDENCE, match_participants
+from src.matcher.name_matcher import CONFIRMED_CONFIDENCE, match_requests, person_groups
 from src.models.certificate import (
     CertificateOutput,
     MatchAmbiguous,
@@ -136,6 +136,11 @@ class MatchEntry(BaseModel):
     needs_review: bool = False
     candidates: list[str] | None = None
     attendance: dict[str, object] | None = None
+    # Positions in the request's ``ce_requests`` that belong to this person
+    # (one person can ask for several CE types). Two different people who
+    # share a name get separate entries.
+    request_indices: list[int] = []
+    email: str | None = None
 
 
 class MatchResponse(BaseModel):
@@ -238,6 +243,8 @@ def _result_status(status: str) -> str:
             return "Excluded"
         case "ce_type_not_offered":
             return "Not Offered"
+        case "duplicate_submission":
+            return "Duplicate"
         case "eligible" | _:
             return "Eligible" if status == "eligible" else "Attendance"
 
@@ -378,30 +385,34 @@ async def match_endpoint(request: MatchRequest) -> MatchResponse:
         session_start, session_end, request.start_time, request.end_time,
     )
 
-    zoom_names = [p.name_raw for p in participants]
-    zoom_lookup = {p.name_raw: p for p in participants}
-    qualtrics_names = [r.name_on_certificate for r in request.ce_requests]
+    zoom_lookup: dict[str, ParticipantAttendance] = {}
+    for p in participants:
+        zoom_lookup.setdefault(p.name_raw, p)
+    pairs = [(r.name_on_certificate, r.email) for r in request.ce_requests]
 
-    qualtrics_emails: dict[str, str | None] = {}
-    for r in request.ce_requests:
-        if r.email and not qualtrics_emails.get(r.name_on_certificate):
-            qualtrics_emails[r.name_on_certificate] = r.email
-
-    result = await asyncio.to_thread(
-        lambda: match_participants(
-            zoom_names,
-            qualtrics_names,
+    results = await asyncio.to_thread(
+        lambda: match_requests(
+            list(zoom_lookup),
+            pairs,
             request.overrides,
-            zoom_emails={p.name_raw: p.email for p in participants},
-            qualtrics_emails=qualtrics_emails,
+            zoom_emails={name: p.email for name, p in zoom_lookup.items()},
         ),
     )
 
+    # One entry per person: requests from the same person share one match.
+    people: dict[int, list[int]] = {}
+    for index, pid in enumerate(person_groups(pairs)):
+        people.setdefault(pid, []).append(index)
+
     entries: list[MatchEntry] = []
-    for q_name, match_result in result.items():
+    for indices in people.values():
+        first = indices[0]
+        q_name = pairs[first][0]
+        email = next((pairs[i][1] for i in indices if pairs[i][1]), None)
+        match_result = results[first]
         match match_result:
             case MatchSuccess(matched_name=matched, confidence=conf):
-                participant = zoom_lookup[matched]
+                participant = zoom_lookup.get(matched)
                 entries.append(
                     MatchEntry(
                         kind="success",
@@ -409,9 +420,13 @@ async def match_endpoint(request: MatchRequest) -> MatchResponse:
                         zoom_name=matched,
                         confidence=conf,
                         needs_review=conf < CONFIRMED_CONFIDENCE,
-                        attendance=_attendance_payload(
-                            participant, session_start, session_end
+                        attendance=(
+                            _attendance_payload(participant, session_start, session_end)
+                            if participant is not None
+                            else None
                         ),
+                        request_indices=indices,
+                        email=email,
                     )
                 )
             case MatchAmbiguous(candidates=cands):
@@ -420,6 +435,8 @@ async def match_endpoint(request: MatchRequest) -> MatchResponse:
                         kind="ambiguous",
                         qualtrics_name=q_name,
                         candidates=list(cands),
+                        request_indices=indices,
+                        email=email,
                     )
                 )
             case MatchNotFound():
@@ -427,6 +444,8 @@ async def match_endpoint(request: MatchRequest) -> MatchResponse:
                     MatchEntry(
                         kind="not_found",
                         qualtrics_name=q_name,
+                        request_indices=indices,
+                        email=email,
                     )
                 )
             case _:

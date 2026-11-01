@@ -212,6 +212,9 @@ class EligibilityStatus(StrEnum):
     EXCLUDED = "excluded"
     """User excluded this person from certificate generation."""
 
+    DUPLICATE_SUBMISSION = "duplicate_submission"
+    """An older survey response from the same person for the same CE type."""
+
     CE_TYPE_NOT_OFFERED = "ce_type_not_offered"
     """Qualtrics CE type was not selected as offered for this session."""
 

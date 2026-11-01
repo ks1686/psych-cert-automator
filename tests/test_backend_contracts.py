@@ -100,6 +100,8 @@ def test_match_endpoint_accepts_frontend_participant_shape() -> None:
                 "total_attended": 180,
                 "failure_reason": None,
             },
+            "request_indices": [0],
+            "email": "alice@example.com",
         }
     ]
 

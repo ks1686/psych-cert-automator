@@ -50,6 +50,12 @@ export interface MatchEntryWire {
   needs_review?: boolean;
   candidates: string[] | null;
   attendance: AttendanceWire | null;
+  /**
+   * Positions in MatchData.ceRequests that belong to this person. Two
+   * different people who share a name get separate entries.
+   */
+  request_indices?: number[];
+  email?: string | null;
 }
 
 export interface ParticipantSummary {
@@ -519,7 +525,7 @@ export default function StepMatchReview({
 
                   return (
                     <TableRow
-                      key={match.qualtrics_name}
+                      key={`${match.qualtrics_name}-${(match.request_indices ?? []).join(",")}`}
                       className={
                         isExcluded
                           ? "bg-muted/40 opacity-70"

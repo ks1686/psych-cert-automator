@@ -32,7 +32,7 @@ from src.models.certificate import (
     MatchNotFound,
     MatchSuccess,
 )
-from src.models.participant import normalize_name
+from src.models.participant import extract_name_tokens, normalize_name
 from src.parser.qualtrics import parse_qualtrics_export
 from src.parser.zoom import ZoomParseError, parse_zoom_attendance
 from src.validator.attendance import validate_attendance
@@ -70,15 +70,32 @@ class PipelineResult:
     """Certificates that were generated but should be checked by a person."""
 
 
-def _dedupe_keys(request: CERequest) -> set[tuple[str, str, str]]:
-    keys: set[tuple[str, str, str]] = set()
-    name = normalize_name(request.name_on_certificate)
-    if name:
-        keys.add(("name", name, str(request.ce_type)))
-    email = (request.email or "").strip().casefold()
-    if email:
-        keys.add(("email", email, str(request.ce_type)))
-    return keys
+def _same_person_and_type(older: CERequest, newer: CERequest) -> bool:
+    """True when two requests are the same person asking for the same CE type.
+
+    Names must match and emails must not conflict. Normalized names that are
+    equal match when at least one email is missing or both are equal. A name
+    that only adds or drops a word ("Ann M. Lee" vs "Ann Lee") matches only
+    when both rows carry the same email. A shared email alone (a family
+    address) never makes two different names one person.
+    """
+    if str(older.ce_type) != str(newer.ce_type):
+        return False
+    old_email = (older.email or "").strip().casefold()
+    new_email = (newer.email or "").strip().casefold()
+    if old_email and new_email and old_email != new_email:
+        return False
+    old_name = normalize_name(older.name_on_certificate)
+    new_name = normalize_name(newer.name_on_certificate)
+    if not old_name or not new_name:
+        return False
+    if old_name == new_name:
+        return True
+    if not (old_email and new_email):
+        return False
+    old_tokens = extract_name_tokens(old_name)
+    new_tokens = extract_name_tokens(new_name)
+    return old_tokens <= new_tokens or new_tokens <= old_tokens
 
 
 def _submitted_sort_key(request: CERequest) -> float:
@@ -86,14 +103,15 @@ def _submitted_sort_key(request: CERequest) -> float:
     return request.submitted_at.timestamp() if request.submitted_at else 0.0
 
 
-def dedupe_requests(requests: list[CERequest]) -> list[CERequest]:
-    """Drop duplicate survey submissions, keeping the latest one.
+def split_duplicates(
+    requests: list[CERequest],
+) -> tuple[list[CERequest], list[CERequest]]:
+    """Split survey rows into the ones to use and older duplicates.
 
-    Two requests are duplicates when they ask for the same CE type and share
-    a normalized name or an email (case-insensitive). "Latest" is the most
-    recent ``submitted_at``; requests without a time count as older than
-    timed ones, and ties keep the later row. The kept requests stay in
-    their original row order.
+    Two requests are duplicates when ``_same_person_and_type`` says so.
+    "Latest" is the most recent ``submitted_at``; requests without a time
+    count as older than timed ones, and ties keep the later row. Both lists
+    keep the original row order.
     """
     order = sorted(
         range(len(requests)),
@@ -103,22 +121,22 @@ def dedupe_requests(requests: list[CERequest]) -> list[CERequest]:
             i,
         ),
     )
-    kept: dict[int, set[tuple[str, str, str]]] = {}
-    owner: dict[tuple[str, str, str], int] = {}
+    kept: list[int] = []
+    dropped: list[int] = []
     for i in order:
-        keys = _dedupe_keys(requests[i])
-        for key in keys:
-            previous = owner.get(key)
-            if previous is not None and previous in kept:
-                for old_key in kept.pop(previous):
-                    _ = owner.pop(old_key, None)
-        kept[i] = keys
-        for key in keys:
-            owner[key] = i
-    dropped = len(requests) - len(kept)
+        older = [j for j in kept if _same_person_and_type(requests[j], requests[i])]
+        for j in older:
+            kept.remove(j)
+            dropped.append(j)
+        kept.append(i)
     if dropped:
-        logger.info("Ignored %d duplicate survey submission(s).", dropped)
-    return [requests[i] for i in sorted(kept)]
+        logger.info("Ignored %d duplicate survey submission(s).", len(dropped))
+    return [requests[i] for i in sorted(kept)], [requests[i] for i in sorted(dropped)]
+
+
+def dedupe_requests(requests: list[CERequest]) -> list[CERequest]:
+    """Drop duplicate survey submissions, keeping the latest one (see ``split_duplicates``)."""
+    return split_duplicates(requests)[0]
 
 
 def session_window(
@@ -214,7 +232,8 @@ def run_pipeline(  # noqa: PLR0913
     try:
         # ── Steps 1-2: Parse reports ───────────────────────────────────────
         zoom_session = parse_zoom_attendance(zoom_path)
-        ce_requests = dedupe_requests(parse_qualtrics_export(qualtrics_path))
+        all_requests = parse_qualtrics_export(qualtrics_path)
+        ce_requests, duplicates = split_duplicates(all_requests)
 
         if not ce_requests:
             logger.info("No CE requests found in Qualtrics report.")
@@ -268,6 +287,7 @@ def run_pipeline(  # noqa: PLR0913
             instructor=instructor,
             ce_credits=ce_credits,
         )
+        ineligible.extend(_duplicate_entry(request) for request in duplicates)
 
         # ── Step 7: Generate certificates ──────────────────────────────────
         generated_paths: list[str] = []
@@ -284,13 +304,13 @@ def run_pipeline(  # noqa: PLR0913
             _ = generate_ineligibility_report(ineligible, report_path)
 
         # ── Step 10: Log summary ───────────────────────────────────────────
-        logger.info("Total CE requests: %d", len(ce_requests))
+        logger.info("Total CE requests: %d", len(all_requests))
         logger.info("Eligible: %d", len(eligible))
         logger.info("Ineligible: %d", len(ineligible))
         logger.info("Certificates generated: %d", len(generated_paths))
 
         return PipelineResult(
-            total_requests=len(ce_requests),
+            total_requests=len(all_requests),
             eligible=eligible,
             ineligible=ineligible,
             errors=errors,
@@ -453,6 +473,22 @@ def _make_ineligible(  # noqa: PLR0913
         rejected_ce_types=(str(request.ce_type),),
         reason=reason,
         status=status,
+    )
+
+
+def _duplicate_entry(request: CERequest) -> IneligibilityEntry:
+    when = (
+        f" (submitted {request.submitted_at:%Y-%m-%d %H:%M})" if request.submitted_at else ""
+    )
+    return _make_ineligible(
+        request,
+        name_zoom=None,
+        match_status="duplicate",
+        reason=(
+            f"Duplicate submission{when}: a later response from the same person "
+            "for the same CE type was used instead."
+        ),
+        status=EligibilityStatus.DUPLICATE_SUBMISSION,
     )
 
 

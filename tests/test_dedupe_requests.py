@@ -6,6 +6,7 @@ from datetime import date, time
 from typing import TYPE_CHECKING
 
 import src.pipeline as pipeline
+from src.models.certificate import EligibilityStatus
 from src.parser.qualtrics import parse_qualtrics_export
 from src.pipeline import dedupe_requests, run_pipeline
 
@@ -72,7 +73,10 @@ def test_pipeline_generates_one_certificate_per_person_and_type(
         str(zoom), str(_qualtrics(tmp_path)), "T", date(2026, 11, 2), "P", 3, ["APA", "NY"],
         time(9, 0), time(12, 0), output_dir=str(tmp_path / "out"),
     )
-    assert result.total_requests == 3
+    # Every survey row is counted; the older duplicates are reported, not hidden.
+    assert result.total_requests == 6
+    duplicates = [e for e in result.ineligible if e.status == EligibilityStatus.DUPLICATE_SUBMISSION]
+    assert len(duplicates) == 3
     certs = sorted((c.full_name, str(c.ce_type), c.license_number) for c in result.eligible)
     assert certs == [
         ("Ann Lee", APA, None),

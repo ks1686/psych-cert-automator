@@ -34,7 +34,11 @@ import {
   type IneligibleResult,
 } from "@/components/generate/IneligibilityReport";
 import { apiFetch, pdfViewUrl } from "@/api/client";
-import { matchNeedsReview, type MatchData } from "@/components/StepMatchReview";
+import {
+  matchNeedsReview,
+  type CERequestSummary,
+  type MatchData,
+} from "@/components/StepMatchReview";
 import type { UploadData } from "@/components/StepUpload";
 
 export type { IneligibleResult, IneligibleStatus } from "@/components/generate/IneligibilityReport";
@@ -122,11 +126,16 @@ function resolveEligibleEntries(
     // Partial matches are never generated until someone confirms them.
     if (matchNeedsReview(match)) continue;
 
-    // Find corresponding CE requests for this Qualtrics name.
-    // A single person may have multiple CE requests (one per CE type).
-    const matchingRequests = matchData.ceRequests.filter(
-      (req) => req.name_on_certificate === match.qualtrics_name,
-    );
+    // Find this person's CE requests (one per CE type). The server lists
+    // them by position so two different people with one name stay apart;
+    // older servers without request_indices fall back to the name.
+    const matchingRequests = match.request_indices
+      ? match.request_indices
+          .map((index) => matchData.ceRequests[index])
+          .filter((req): req is CERequestSummary => req !== undefined)
+      : matchData.ceRequests.filter(
+          (req) => req.name_on_certificate === match.qualtrics_name,
+        );
 
     for (const req of matchingRequests) {
       if (isUnofferedSpecialty(req.ce_type, offered)) continue;
