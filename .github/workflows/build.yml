@@ -210,6 +210,9 @@ jobs:
       - name: Verify macOS signing and notarization
         if: success() && runner.os == 'macOS' && github.event_name != 'pull_request'
         shell: bash
+        # Fails fast with a readable error instead of consuming the job's
+        # 45-minute global budget if the sidecar smoke test misbehaves.
+        timeout-minutes: 8
         run: |
           set -euo pipefail
           DMG_PATH=$(find src-tauri/target/release/bundle/dmg -name '*.dmg' -maxdepth 1 | head -n 1)
@@ -256,8 +259,10 @@ jobs:
           cleanup_side() { kill "$SIDE_PID" 2>/dev/null || true; }
           trap 'cleanup_side; cleanup' EXIT
           ready=0
-          for _ in $(seq 1 45); do
-            if curl -fsS http://127.0.0.1:8008/health; then
+          for _ in $(seq 1 60); do
+            # --max-time keeps a half-initialized uvicorn (socket bound, app not
+            # yet serving) from blocking the poll indefinitely.
+            if curl -fsS --connect-timeout 1 --max-time 2 http://127.0.0.1:8008/health; then
               ready=1
               break
             fi
@@ -273,8 +278,20 @@ jobs:
             cat "$SIDE_ERR" >&2 || true
             exit 1
           fi
-          curl -fsS -X POST http://127.0.0.1:8008/shutdown || true
-          wait "$SIDE_PID" || true
+          # POST /shutdown requires a JSON body (_ShutdownRequest.reason). Without
+          # it FastAPI answers 422, the sidecar keeps running, and the `wait`
+          # below blocks until the job's global timeout cancels the whole build.
+          curl -fsS --max-time 5 -X POST \
+            -H 'Content-Type: application/json' \
+            -d '{"reason":"ci-verify"}' \
+            http://127.0.0.1:8008/shutdown || true
+          # Bounded wait: never let a failed shutdown hang the job.
+          for _ in $(seq 1 15); do
+            kill -0 "$SIDE_PID" 2>/dev/null || break
+            sleep 1
+          done
+          kill "$SIDE_PID" 2>/dev/null || true
+          wait "$SIDE_PID" 2>/dev/null || true
           if ! codesign -dv --verbose=2 "$APP_PATH" 2>&1 | grep -q "Developer ID Application"; then
             echo "App is not signed with Developer ID Application" >&2
             exit 1
