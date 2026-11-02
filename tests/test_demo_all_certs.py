@@ -5,19 +5,40 @@ from pathlib import Path
 from src.pipeline import run_pipeline
 from tests.synthetic import write_zoom, write_qualtrics
 
+# All times are naive UTC for test reproducibility; DTZ001 is intentional.
+_TZ_NONE = None  # type: ignore[assignment]
+
 
 def _dt(year: int, month: int, day: int, hour: int, minute: int) -> datetime:
-    return datetime(year, month, day, hour, minute)
+    return datetime(year, month, day, hour, minute, tzinfo=_TZ_NONE)  # noqa: DTZ001
+
+
+_ZOOM_TUPLE_LEN = 3  # (join, leave, waiting_room) after name/email
 
 
 def test_all_five_certificate_types_generate(tmp_path: Path) -> None:
     """APA, NASP, NY, NBCC, and Attendance certificates all generate."""
     zoom_rows = [
-        ("Alice Anderson", "alice@example.test", _dt(2026, 11, 2, 8, 45), _dt(2026, 11, 2, 12, 15), "No"),
-        ("Bob Martinez", "bob@example.test", _dt(2026, 11, 2, 8, 50), _dt(2026, 11, 2, 12, 10), "No"),
-        ("Carol Chen", "carol@example.test", _dt(2026, 11, 2, 8, 48), _dt(2026, 11, 2, 12, 12), "No"),
-        ("David Kim", "david@example.test", _dt(2026, 11, 2, 8, 55), _dt(2026, 11, 2, 12, 8), "No"),
-        ("Elena Volkov", "elena@example.test", _dt(2026, 11, 2, 8, 52), _dt(2026, 11, 2, 12, 14), "No"),
+        (
+            "Alice Anderson", "alice@example.test",
+            _dt(2026, 11, 2, 8, 45), _dt(2026, 11, 2, 12, 15), "No",
+        ),
+        (
+            "Bob Martinez", "bob@example.test",
+            _dt(2026, 11, 2, 8, 50), _dt(2026, 11, 2, 12, 10), "No",
+        ),
+        (
+            "Carol Chen", "carol@example.test",
+            _dt(2026, 11, 2, 8, 48), _dt(2026, 11, 2, 12, 12), "No",
+        ),
+        (
+            "David Kim", "david@example.test",
+            _dt(2026, 11, 2, 8, 55), _dt(2026, 11, 2, 12, 8), "No",
+        ),
+        (
+            "Elena Volkov", "elena@example.test",
+            _dt(2026, 11, 2, 8, 52), _dt(2026, 11, 2, 12, 14), "No",
+        ),
     ]
     zoom_path = tmp_path / "zoom.xlsx"
     write_zoom(
