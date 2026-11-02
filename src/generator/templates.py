@@ -12,6 +12,8 @@ from zipfile import ZIP_DEFLATED, ZipFile
 
 from lxml import etree
 
+from src.models.credits import format_ce_credits
+
 TemplateKey = Literal["apa", "ny", "nasp", "nbcc", "attendance"]
 
 _W_NS = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
@@ -46,7 +48,7 @@ class TemplateRenderContext:
     full_name: str
     training_title: str
     instructor_name: str
-    ce_credits: int
+    ce_credits: float
     license_number: str | None
     date_display: str
     time_display: str
@@ -123,7 +125,7 @@ def build_replacements(key: TemplateKey, ctx: TemplateRenderContext) -> dict[str
     title = ctx.training_title.strip()
     name = ctx.full_name.strip()
     instructor = ctx.instructor_name.strip()
-    credits = str(ctx.ce_credits)
+    credits = format_ce_credits(ctx.ce_credits)
     time_display = ctx.time_display.strip() or "—"
 
     if key == "apa":
@@ -239,24 +241,26 @@ def _replace_in_paragraph(
     paragraph: etree.ElementBase,
     ordered: list[tuple[str, str]],
 ) -> None:
-    for key, value in ordered:
-        if not key:
-            continue
+    """Replace every placeholder in one pass over the original paragraph text.
+
+    A single regex (longest keys first) finds all placeholder occurrences in
+    the template text up front, and the callback-style splice writes each
+    value exactly once. Inserted values are never scanned again, so a title
+    such as "NAME THAT TITLE BY DATE" is left exactly as typed.
+    """
+    keys = [key for key, _value in ordered if key]
+    if not keys:
+        return
+    values = dict(ordered)
+    pattern = re.compile("|".join(re.escape(key) for key in keys))
+    text_nodes = paragraph.xpath(".//w:t", namespaces=_NSMAP)
+    if not text_nodes:
+        return
+    full = "".join((node.text or "") for node in text_nodes)
+    matches = list(pattern.finditer(full))
+    for match in reversed(matches):
         text_nodes = paragraph.xpath(".//w:t", namespaces=_NSMAP)
-        if not text_nodes:
-            return
-        full = "".join((node.text or "") for node in text_nodes)
-        starts: list[int] = []
-        idx = 0
-        while True:
-            pos = full.find(key, idx)
-            if pos == -1:
-                break
-            starts.append(pos)
-            idx = pos + len(key)
-        for start in reversed(starts):
-            text_nodes = paragraph.xpath(".//w:t", namespaces=_NSMAP)
-            _splice_value(text_nodes, start, start + len(key), value)
+        _splice_value(text_nodes, match.start(), match.end(), values[match.group(0)])
 
 
 def _splice_value(

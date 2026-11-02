@@ -96,11 +96,11 @@ def _status_fill(status: EligibilityStatus) -> PatternFill:
     match status:
         case EligibilityStatus.NOT_FOUND_IN_ATTENDANCE:
             return _FILL_NOT_FOUND
-        case EligibilityStatus.NAME_MATCH_AMBIGUOUS:
+        case EligibilityStatus.NAME_MATCH_AMBIGUOUS | EligibilityStatus.NEEDS_REVIEW:
             return _FILL_AMBIGUOUS
         case EligibilityStatus.ATTENDANCE_INSUFFICIENT:
             return _FILL_INSUFFICIENT
-        case EligibilityStatus.EXCLUDED:
+        case EligibilityStatus.EXCLUDED | EligibilityStatus.DUPLICATE_SUBMISSION:
             return _FILL_INSUFFICIENT
         case EligibilityStatus.CE_TYPE_NOT_OFFERED:
             return _FILL_AMBIGUOUS
@@ -260,6 +260,19 @@ def _write_summary_sheet(
 # ═══════════════════════════════════════════════════════════════════════════════
 # Public API
 # ═══════════════════════════════════════════════════════════════════════════════
+
+
+def next_free_path(path: Path) -> Path:
+    """Return ``path``, or ``stem_2.ext``, ``stem_3.ext``... if it already exists.
+
+    Keeps a rerun into the same output folder from overwriting earlier files.
+    """
+    if not path.exists():
+        return path
+    n = 2
+    while (candidate := path.with_name(f"{path.stem}_{n}{path.suffix}")).exists():
+        n += 1
+    return candidate
 
 
 def generate_ineligibility_report(

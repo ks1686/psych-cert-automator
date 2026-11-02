@@ -1,7 +1,7 @@
 import { useState, useCallback, useMemo } from "react";
 import { CheckCircle, AlertTriangle, XCircle, Loader2 } from "lucide-react";
 
-import { API_BASE } from "@/api/client";
+import { apiFetch } from "@/api/client";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -46,8 +46,16 @@ export interface MatchEntryWire {
   qualtrics_name: string;
   zoom_name: string | null;
   confidence: number | null;
+  /** True for a partial (below 100%) match that has not been confirmed. */
+  needs_review?: boolean;
   candidates: string[] | null;
   attendance: AttendanceWire | null;
+  /**
+   * Positions in MatchData.ceRequests that belong to this person. Two
+   * different people who share a name get separate entries.
+   */
+  request_indices?: number[];
+  email?: string | null;
 }
 
 export interface ParticipantSummary {
@@ -73,9 +81,14 @@ export interface MatchData {
   ceRequests: CERequestSummary[];
   sessionStart: string;
   sessionEnd: string;
+  /** Typed session start/end (HH:MM) from Step 1; eligibility uses these. */
+  startTime?: string;
+  endTime?: string;
   zoomHost: string | null;
   /** Absolute path to the Zoom workbook — used for full-segment attendance. */
   zoomPath: string;
+  /** Server notes for the reviewer (for example the meeting ended early). */
+  warnings?: string[];
 }
 
 // ── Props ───────────────────────────────────────────────────────────────────
@@ -96,6 +109,13 @@ function confidencePercent(c: number | null): string {
 function formatAttendanceMinutes(attendance: AttendanceWire | null): string {
   if (!attendance) return "—";
   return `${attendance.total_attended}m / missed ${attendance.total_missed.toFixed(1)}m`;
+}
+
+/** A success below 100% confidence must be confirmed before generating. */
+export function matchNeedsReview(match: MatchEntryWire): boolean {
+  if (match.kind !== "success") return false;
+  if (match.needs_review !== undefined) return match.needs_review;
+  return match.confidence !== null && match.confidence < 1;
 }
 
 // ── Component ───────────────────────────────────────────────────────────────
@@ -145,10 +165,15 @@ export default function StepMatchReview({
     let ambiguous = 0;
     let notFound = 0;
     let ineligible = 0;
+    let needsReview = 0;
 
     for (const m of matches) {
       switch (m.kind) {
         case "success": {
+          if (matchNeedsReview(m)) {
+            needsReview++;
+            break;
+          }
           matched++;
           if (m.attendance && !m.attendance.is_eligible) {
             ineligible++;
@@ -164,7 +189,7 @@ export default function StepMatchReview({
       }
     }
 
-    return { matched, ambiguous, notFound, ineligible };
+    return { matched, ambiguous, notFound, ineligible, needsReview };
   }, [matches]);
 
   // All Zoom participant names (for not_found dropdown)
@@ -199,7 +224,7 @@ export default function StepMatchReview({
     setError(null);
 
     try {
-      const response = await fetch(`${API_BASE}/api/match`, {
+      const response = await apiFetch("/api/match", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -208,6 +233,8 @@ export default function StepMatchReview({
           ce_requests: initialData.ceRequests,
           session_start: initialData.sessionStart,
           session_end: initialData.sessionEnd,
+          start_time: initialData.startTime || undefined,
+          end_time: initialData.endTime || undefined,
           overrides:
             Object.keys(overrides).length > 0 ? overrides : undefined,
         }),
@@ -236,6 +263,8 @@ export default function StepMatchReview({
     initialData.ceRequests,
     initialData.sessionStart,
     initialData.sessionEnd,
+    initialData.startTime,
+    initialData.endTime,
   ]);
 
   const buildMatchPayload = useCallback(
@@ -247,8 +276,11 @@ export default function StepMatchReview({
       ceRequests: initialData.ceRequests,
       sessionStart: initialData.sessionStart,
       sessionEnd: initialData.sessionEnd,
+      startTime: initialData.startTime,
+      endTime: initialData.endTime,
       zoomHost: initialData.zoomHost,
       zoomPath: initialData.zoomPath,
+      warnings: initialData.warnings,
     }),
     [overrides, excluded, initialData],
   );
@@ -279,6 +311,15 @@ export default function StepMatchReview({
   function renderStatusBadge(match: MatchEntryWire) {
     switch (match.kind) {
       case "success": {
+        if (matchNeedsReview(match)) {
+          const confirmed = overrides[match.qualtrics_name] === match.zoom_name;
+          return (
+            <Badge className="border-transparent bg-amber-100 text-amber-800 dark:bg-amber-900 dark:text-amber-100">
+              <AlertTriangle className="mr-1 h-3 w-3" />
+              {confirmed ? "Included (pending apply)" : "Needs review"}
+            </Badge>
+          );
+        }
         const isIneligible =
           match.attendance && !match.attendance.is_eligible;
         if (isIneligible) {
@@ -325,6 +366,25 @@ export default function StepMatchReview({
   }
 
   function renderActionCell(match: MatchEntryWire) {
+    if (match.kind === "success" && matchNeedsReview(match) && match.zoom_name) {
+      const zoomName = match.zoom_name;
+      const confirmed = overrides[match.qualtrics_name] === zoomName;
+      return (
+        <Button
+          size="sm"
+          variant={confirmed ? "secondary" : "outline"}
+          aria-label={`Include ${match.qualtrics_name}`}
+          onClick={() =>
+            handleSelectionChange(
+              match.qualtrics_name,
+              confirmed ? "__skip__" : zoomName,
+            )
+          }
+        >
+          {confirmed ? "Undo include" : "Include this match"}
+        </Button>
+      );
+    }
     if (match.kind === "success") {
       return (
         <span className="text-sm text-muted-foreground">—</span>
@@ -393,7 +453,9 @@ export default function StepMatchReview({
         <CardHeader>
           <CardTitle className="text-xl">Review Name Matches</CardTitle>
           <p className="text-sm text-muted-foreground">
-            Review the automatic name matching results. Use the dropdowns to
+            Review the automatic name matching results. Partial matches are
+            marked <strong>Needs review</strong> and are left out unless you
+            click <strong>Include this match</strong>. Use the dropdowns to
             correct ambiguous or unmatched names, then click{" "}
             <strong>Apply Corrections</strong> to re-run matching.
           </p>
@@ -411,6 +473,11 @@ export default function StepMatchReview({
             <Badge variant="secondary" className="border-transparent bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-100">
               {summary.notFound} not found
             </Badge>
+            {summary.needsReview > 0 && (
+              <Badge variant="secondary" className="border-transparent bg-amber-100 text-amber-800 dark:bg-amber-900 dark:text-amber-100">
+                {summary.needsReview} need review
+              </Badge>
+            )}
             {summary.ineligible > 0 && (
               <Badge variant="secondary" className="border-transparent bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-100">
                 {summary.ineligible} ineligible
@@ -422,6 +489,18 @@ export default function StepMatchReview({
               </span>
             )}
           </div>
+
+          {/* ── Session window warnings ──────────────────────────────── */}
+          {(initialData.warnings ?? []).map((warning) => (
+            <div
+              key={warning}
+              role="status"
+              className="flex items-start gap-2 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-700 dark:bg-amber-950 dark:text-amber-100"
+            >
+              <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+              <span>{warning}</span>
+            </div>
+          ))}
 
           {/* ── Error banner ─────────────────────────────────────────── */}
           {error && (
@@ -446,6 +525,7 @@ export default function StepMatchReview({
               </TableHeader>
               <TableBody>
                 {matches.map((match) => {
+                  const isReviewRow = matchNeedsReview(match);
                   const isIneligibleRow =
                     match.kind === "success" &&
                     match.attendance &&
@@ -460,10 +540,12 @@ export default function StepMatchReview({
 
                   return (
                     <TableRow
-                      key={match.qualtrics_name}
+                      key={`${match.qualtrics_name}-${(match.request_indices ?? []).join(",")}`}
                       className={
                         isExcluded
                           ? "bg-muted/40 opacity-70"
+                          : isReviewRow
+                            ? "bg-amber-50 dark:bg-amber-950/30"
                           : isIneligibleRow
                             ? "bg-yellow-50 dark:bg-yellow-950/30"
                             : ""

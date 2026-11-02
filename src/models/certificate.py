@@ -7,8 +7,10 @@ from dataclasses import dataclass
 from enum import StrEnum, unique
 from typing import TYPE_CHECKING
 
+from src.models.participant import surname
+
 if TYPE_CHECKING:
-    from datetime import date
+    from datetime import date, datetime
 
     from src.models.training import CEType
 
@@ -61,6 +63,9 @@ class CERequest:
     license_number: str | None
     """License or certificate number, required by some CE types."""
 
+    submitted_at: datetime | None = None
+    """When the survey response was recorded, if the export has that column."""
+
 
 @dataclass(frozen=True, slots=True)
 class CertificateOutput:
@@ -72,7 +77,7 @@ class CertificateOutput:
     ce_type: CEType
     """CE type short code (e.g., 'APA')."""
 
-    ce_credits: int
+    ce_credits: float
     """Number of CE credits awarded."""
 
     training_title: str
@@ -118,7 +123,10 @@ class CertificateOutput:
 
 
 def _last_name(full_name: str) -> str:
-    """Return the last whitespace-separated token of a person name."""
+    """Return the surname, skipping honorifics and credentials (``Ph.D.``)."""
+    found = surname(full_name)
+    if found:
+        return found
     parts = full_name.strip().rsplit(" ", 1)
     if len(parts) == _NAME_PARTS_COUNT:
         return parts[1]
@@ -203,8 +211,14 @@ class EligibilityStatus(StrEnum):
     NAME_MATCH_AMBIGUOUS = "name_match_ambiguous"
     """Multiple possible Zoom matches — manual review required."""
 
+    NEEDS_REVIEW = "needs_review"
+    """A partial (below 1.0) name match that a person has not confirmed."""
+
     EXCLUDED = "excluded"
     """User excluded this person from certificate generation."""
+
+    DUPLICATE_SUBMISSION = "duplicate_submission"
+    """An older survey response from the same person for the same CE type."""
 
     CE_TYPE_NOT_OFFERED = "ce_type_not_offered"
     """Qualtrics CE type was not selected as offered for this session."""

@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { expect, test, vi } from "vitest";
 
 import StepMetadata, {
+  ceCreditsError,
   type MetadataFormData,
 } from "@/components/StepMetadata";
 
@@ -65,15 +66,35 @@ test("requires a location for in-person events", async () => {
   expect(screen.getByRole("button", { name: "Next" })).toBeEnabled();
 });
 
-test("explains session times are printed, not used for attendance", () => {
+test("explains session times are printed and used for attendance", () => {
   render(<StepMetadata onNext={vi.fn()} />);
 
   expect(
     screen.getByText(/printed on certificates/i),
   ).toBeInTheDocument();
   expect(
-    screen.getByText(/Zoom attendance report/i),
+    screen.getByText(/attendance is checked against/i),
   ).toBeInTheDocument();
+});
+
+test("accepts quarter-step CE credits and rejects other fractions", () => {
+  expect(ceCreditsError(1.5)).toBeNull();
+  expect(ceCreditsError(0.25)).toBeNull();
+  expect(ceCreditsError(3)).toBeNull();
+  expect(ceCreditsError(1.3)).toMatch(/steps of 0.25/);
+  expect(ceCreditsError(0)).toMatch(/greater than 0/);
+  expect(ceCreditsError(101)).toMatch(/at most 100/);
+});
+
+test("enables Next for 1.5 CE credits", () => {
+  render(
+    <StepMetadata
+      onNext={vi.fn()}
+      initialData={{ ...validMetadata, ceCredits: 1.5 }}
+    />,
+  );
+
+  expect(screen.getByRole("button", { name: "Next" })).toBeEnabled();
 });
 
 test("offers APA, NASP, NY, and NBCC CE types without BCBA", () => {

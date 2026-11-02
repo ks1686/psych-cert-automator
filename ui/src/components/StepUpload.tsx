@@ -1,6 +1,6 @@
 import { useState, useCallback } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
-import { API_BASE } from "@/api/client";
+import { apiFetch } from "@/api/client";
 import { Loader2, Upload, FileSpreadsheet } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -52,9 +52,9 @@ interface ParseResponse {
 }
 
 export interface UploadData {
-  /** Absolute path to the Zoom attendance .xlsx file */
+  /** Absolute path to the Zoom attendance .xlsx or .csv file */
   zoomPath: string;
-  /** Absolute path to the Qualtrics CE survey .xlsx file */
+  /** Absolute path to the Qualtrics CE survey .xlsx or .csv file */
   qualtricsPath: string;
   /** Parsed Zoom participant summaries */
   zoomParticipants: ZoomParticipant[];
@@ -137,7 +137,7 @@ export default function StepUpload({
     try {
       const selected = await open({
         title: "Select Zoom Attendance Report",
-        filters: [{ name: "Excel Files", extensions: ["xlsx"] }],
+        filters: [{ name: "Excel or CSV", extensions: ["xlsx", "csv"] }],
         multiple: false,
       });
       if (selected !== null && typeof selected === "string") {
@@ -154,7 +154,7 @@ export default function StepUpload({
     try {
       const selected = await open({
         title: "Select Qualtrics CE Survey",
-        filters: [{ name: "Excel Files", extensions: ["xlsx"] }],
+        filters: [{ name: "Excel or CSV", extensions: ["xlsx", "csv"] }],
         multiple: false,
       });
       if (selected !== null && typeof selected === "string") {
@@ -177,7 +177,7 @@ export default function StepUpload({
     setParseResult(null);
 
     try {
-      const response = await fetch(`${API_BASE}/api/parse`, {
+      const response = await apiFetch("/api/parse", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -245,7 +245,7 @@ export default function StepUpload({
         <CardTitle className="text-2xl">Step 2: Upload Files</CardTitle>
         <CardDescription>
           Select your Zoom attendance report and Qualtrics CE survey export.
-          Both must be Excel (.xlsx) files.
+          Each can be an Excel (.xlsx) or CSV export.
         </CardDescription>
       </CardHeader>
 

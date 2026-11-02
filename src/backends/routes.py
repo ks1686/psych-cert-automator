@@ -13,10 +13,11 @@ from __future__ import annotations
 
 import asyncio
 import io
+import json
 import secrets
 import tempfile
 import zipfile
-from datetime import date, datetime, time, timezone
+from datetime import date, datetime, time
 from pathlib import Path
 from typing import Literal, assert_never
 
@@ -24,20 +25,25 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
 
-from src.generator.certificate import CertificateRenderOptions, generate_certificate
-from src.generator.zoom_host import extract_zoom_host
-from src.matcher.name_matcher import match_participants
+from src.generator.certificate import (
+    CertificateRenderOptions,
+    certificate_warnings,
+    generate_certificate,
+)
+from src.matcher.name_matcher import CONFIRMED_CONFIDENCE, match_requests, person_groups
 from src.models.certificate import (
     CertificateOutput,
     MatchAmbiguous,
     MatchNotFound,
     MatchSuccess,
 )
+from src.models.credits import CECredits  # noqa: TC001 (pydantic needs it at runtime)
 from src.models.participant import AttendanceRecord, ParticipantAttendance
 from src.models.training import CEType
 from src.parser.qualtrics import parse_qualtrics_export
+from src.parser.tabular import UnreadableFileError
 from src.parser.zoom import ZoomParseError, parse_zoom_attendance
-from src.pipeline import PipelineResult, run_pipeline
+from src.pipeline import PipelineResult, dedupe_requests, judged_window, run_pipeline
 from src.validator.attendance import validate_attendance
 
 router = APIRouter()
@@ -115,6 +121,10 @@ class MatchRequest(BaseModel):
     overrides: dict[str, str] | None = None
     session_start: datetime | None = None
     session_end: datetime | None = None
+    # Entered session times (HH:MM). When set they take precedence over the
+    # meeting window above, on the meeting's date, exactly like /generate.
+    start_time: time | None = None
+    end_time: time | None = None
     # When set, attendance uses full Zoom segments (same as generate).
     zoom_path: str | None = None
 
@@ -126,14 +136,25 @@ class MatchEntry(BaseModel):
     qualtrics_name: str
     zoom_name: str | None = None
     confidence: float | None = None
+    # True for a partial (below 1.0) match: it is excluded from generation
+    # until someone confirms it (the UI sends it back as an override).
+    needs_review: bool = False
     candidates: list[str] | None = None
     attendance: dict[str, object] | None = None
+    # Positions in the request's ``ce_requests`` that belong to this person
+    # (one person can ask for several CE types). Two different people who
+    # share a name get separate entries.
+    request_indices: list[int] = []
+    email: str | None = None
 
 
 class MatchResponse(BaseModel):
     """Response for ``POST /api/match``."""
 
     matches: list[MatchEntry]
+    # Notes for the reviewer, such as the Zoom meeting ending before the
+    # entered session end.
+    warnings: list[str] = []
 
 
 class PreviewRequest(BaseModel):
@@ -141,7 +162,7 @@ class PreviewRequest(BaseModel):
 
     full_name: str
     ce_type: str
-    ce_credits: int
+    ce_credits: CECredits
     training_title: str
     training_date: date
     instructor_name: str
@@ -162,7 +183,7 @@ class GenerateRequest(BaseModel):
     title: str
     training_date: date
     instructor: str
-    ce_credits: int
+    ce_credits: CECredits
     ce_types: list[str]
     start_time: time
     end_time: time
@@ -216,20 +237,21 @@ def _attendance_payload(
     }
 
 
+_RESULT_STATUS_LABELS = {
+    "eligible": "Eligible",
+    "not_found_in_attendance": "Not Found",
+    "attendance_insufficient": "Attendance",
+    "name_match_ambiguous": "Ambiguous",
+    "needs_review": "Needs Review",
+    "excluded": "Excluded",
+    "ce_type_not_offered": "Not Offered",
+    "duplicate_submission": "Duplicate",
+}
+
+
 def _result_status(status: str) -> str:
-    match status:
-        case "not_found_in_attendance":
-            return "Not Found"
-        case "attendance_insufficient":
-            return "Attendance"
-        case "name_match_ambiguous":
-            return "Ambiguous"
-        case "excluded":
-            return "Excluded"
-        case "ce_type_not_offered":
-            return "Not Offered"
-        case "eligible" | _:
-            return "Eligible" if status == "eligible" else "Attendance"
+    """UI label for an eligibility status (unknown ones read as attendance)."""
+    return _RESULT_STATUS_LABELS.get(status, "Attendance")
 
 
 def _register_generated_file(path: Path) -> str:
@@ -261,6 +283,11 @@ def _clear_generated_registry() -> None:
 # ═══════════════════════════════════════════════════════════════════════════
 
 
+def _unreadable(exc: UnreadableFileError) -> HTTPException:
+    """400 for a file that is not a readable spreadsheet (same wording as before)."""
+    return HTTPException(status_code=400, detail=f"Could not read spreadsheet: {exc}")
+
+
 @router.post("/parse", response_model=ParseResponse)
 async def parse_endpoint(request: ParseRequest) -> ParseResponse:
     """Parse Zoom attendance and Qualtrics CE-request reports.
@@ -273,14 +300,17 @@ async def parse_endpoint(request: ParseRequest) -> ParseResponse:
         zoom_session = await asyncio.to_thread(
             parse_zoom_attendance, request.zoom_path,
         )
-        ce_requests_raw = await asyncio.to_thread(
-            parse_qualtrics_export, request.qualtrics_path,
+        ce_requests_raw = dedupe_requests(
+            await asyncio.to_thread(parse_qualtrics_export, request.qualtrics_path),
         )
-        zoom_host = await asyncio.to_thread(extract_zoom_host, request.zoom_path)
     except FileNotFoundError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except ZoomParseError as exc:
+        if isinstance(exc.__cause__, UnreadableFileError):
+            raise _unreadable(exc.__cause__) from exc
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except UnreadableFileError as exc:
+        raise _unreadable(exc) from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except zipfile.BadZipFile as exc:
@@ -317,7 +347,40 @@ async def parse_endpoint(request: ParseRequest) -> ParseResponse:
         ce_requests=ce_requests,
         participant_count=len(participants),
         request_count=len(ce_requests),
-        zoom_host=zoom_host,
+        zoom_host=zoom_session.host,
+    )
+
+
+async def _match_participants(
+    request: MatchRequest,
+) -> tuple[list[ParticipantAttendance], datetime, datetime]:
+    """Zoom participants and the meeting window for /match.
+
+    Parses ``zoom_path`` when given (same fidelity as /generate); otherwise
+    uses the participant briefs the UI sent.
+    """
+    if request.zoom_path:
+        try:
+            zoom_session = await asyncio.to_thread(
+                parse_zoom_attendance, request.zoom_path,
+            )
+        except (FileNotFoundError, ZoomParseError) as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return (
+            list(zoom_session.participants),
+            request.session_start or zoom_session.session_start,
+            request.session_end or zoom_session.session_end,
+        )
+    if not request.zoom_participants:
+        raise HTTPException(
+            status_code=400,
+            detail="zoom_participants must not be empty when zoom_path is omitted",
+        )
+    participants = [_participant_from_brief(p) for p in request.zoom_participants]
+    return (
+        participants,
+        request.session_start or min(p.first_join for p in participants),
+        request.session_end or max(p.last_leave for p in participants),
     )
 
 
@@ -335,50 +398,59 @@ async def match_endpoint(request: MatchRequest) -> MatchResponse:
     if not request.ce_requests:
         raise HTTPException(status_code=400, detail="ce_requests must not be empty")
 
-    if request.zoom_path:
-        try:
-            zoom_session = await asyncio.to_thread(
-                parse_zoom_attendance, request.zoom_path,
-            )
-        except FileNotFoundError as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
-        except ZoomParseError as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
-        participants = list(zoom_session.participants)
-        session_start = request.session_start or zoom_session.session_start
-        session_end = request.session_end or zoom_session.session_end
-    else:
-        if not request.zoom_participants:
-            raise HTTPException(
-                status_code=400,
-                detail="zoom_participants must not be empty when zoom_path is omitted",
-            )
-        participants = [_participant_from_brief(p) for p in request.zoom_participants]
-        session_start = request.session_start or min(p.first_join for p in participants)
-        session_end = request.session_end or max(p.last_leave for p in participants)
-
-    zoom_names = [p.name_raw for p in participants]
-    zoom_lookup = {p.name_raw: p for p in participants}
-    qualtrics_names = [r.name_on_certificate for r in request.ce_requests]
-
-    result = await asyncio.to_thread(
-        match_participants, zoom_names, qualtrics_names, request.overrides,
+    participants, session_start, session_end = await _match_participants(request)
+    # The Zoom meeting window is real when it comes from the file or the UI;
+    # a window guessed from participant join times is not clipped against.
+    session_start, session_end, window_warning = judged_window(
+        session_start,
+        session_end,
+        request.start_time,
+        request.end_time,
+        clip_to_meeting=bool(request.zoom_path or (request.session_start and request.session_end)),
     )
 
+    zoom_lookup: dict[str, ParticipantAttendance] = {}
+    for p in participants:
+        zoom_lookup.setdefault(p.name_raw, p)
+    pairs = [(r.name_on_certificate, r.email) for r in request.ce_requests]
+
+    results = await asyncio.to_thread(
+        lambda: match_requests(
+            list(zoom_lookup),
+            pairs,
+            request.overrides,
+            zoom_emails={name: p.email for name, p in zoom_lookup.items()},
+        ),
+    )
+
+    # One entry per person: requests from the same person share one match.
+    people: dict[int, list[int]] = {}
+    for index, pid in enumerate(person_groups(pairs)):
+        people.setdefault(pid, []).append(index)
+
     entries: list[MatchEntry] = []
-    for q_name, match_result in result.items():
+    for indices in people.values():
+        first = indices[0]
+        q_name = pairs[first][0]
+        email = next((pairs[i][1] for i in indices if pairs[i][1]), None)
+        match_result = results[first]
         match match_result:
             case MatchSuccess(matched_name=matched, confidence=conf):
-                participant = zoom_lookup[matched]
+                participant = zoom_lookup.get(matched)
                 entries.append(
                     MatchEntry(
                         kind="success",
                         qualtrics_name=q_name,
                         zoom_name=matched,
                         confidence=conf,
-                        attendance=_attendance_payload(
-                            participant, session_start, session_end
+                        needs_review=conf < CONFIRMED_CONFIDENCE,
+                        attendance=(
+                            _attendance_payload(participant, session_start, session_end)
+                            if participant is not None
+                            else None
                         ),
+                        request_indices=indices,
+                        email=email,
                     )
                 )
             case MatchAmbiguous(candidates=cands):
@@ -387,6 +459,8 @@ async def match_endpoint(request: MatchRequest) -> MatchResponse:
                         kind="ambiguous",
                         qualtrics_name=q_name,
                         candidates=list(cands),
+                        request_indices=indices,
+                        email=email,
                     )
                 )
             case MatchNotFound():
@@ -394,12 +468,18 @@ async def match_endpoint(request: MatchRequest) -> MatchResponse:
                     MatchEntry(
                         kind="not_found",
                         qualtrics_name=q_name,
+                        request_indices=indices,
+                        email=email,
                     )
                 )
             case _:
                 assert_never(match_result)
 
-    return MatchResponse(matches=entries)
+    return MatchResponse(matches=entries, warnings=[window_warning] if window_warning else [])
+
+
+PREVIEW_WARNINGS_HEADER = "X-Certificate-Warnings"
+"""Response header carrying a JSON list of preview warnings, when any."""
 
 
 @router.post("/preview")
@@ -409,25 +489,27 @@ async def preview_endpoint(request: PreviewRequest) -> StreamingResponse:
     Returns a PDF when conversion succeeds; otherwise returns the filled
     ``.docx`` (soft-fail) so preview never hard-depends on a converter.
     """
-    issue_date = request.issue_date or datetime.now(tz=timezone.utc).date()  # noqa: UP017
+    # Local date, same as /generate and the CLI (a UTC date is a day ahead
+    # for evening sessions in the US).
+    issue_date = request.issue_date or date.today()  # noqa: DTZ011
 
-    file_bytes, media_type, filename = await asyncio.to_thread(
+    file_bytes, media_type, filename, warnings = await asyncio.to_thread(
         _build_preview_certificate,
         request,
         issue_date,
     )
 
-    return StreamingResponse(
-        io.BytesIO(file_bytes),
-        media_type=media_type,
-        headers={"Content-Disposition": f"inline; filename={filename}"},
-    )
+    headers = {"Content-Disposition": f"inline; filename={filename}"}
+    if warnings:
+        # ASCII-only JSON so names in any script survive the HTTP header.
+        headers[PREVIEW_WARNINGS_HEADER] = json.dumps(warnings, ensure_ascii=True)
+    return StreamingResponse(io.BytesIO(file_bytes), media_type=media_type, headers=headers)
 
 
 def _build_preview_certificate(
     request: PreviewRequest,
     issue_date: date,
-) -> tuple[bytes, str, str]:
+) -> tuple[bytes, str, str, list[str]]:
     output = CertificateOutput(
         full_name=request.full_name,
         ce_type=CEType(request.ce_type),
@@ -448,13 +530,14 @@ def _build_preview_certificate(
     with tempfile.TemporaryDirectory() as tmp:
         path = Path(generate_certificate(output, tmp, options=options))
         data = path.read_bytes()
-        suffix = path.suffix.lower()
-        if suffix == ".pdf":
-            return data, "application/pdf", path.name
+        warnings = certificate_warnings(output, str(path))
+        if path.suffix.lower() == ".pdf":
+            return data, "application/pdf", path.name, warnings
         return (
             data,
             "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
             path.name,
+            warnings,
         )
 
 
@@ -512,7 +595,7 @@ async def generate_endpoint(request: GenerateRequest) -> dict[str, object]:
         strict=True,
     ):
         file_path = Path(generated_path)
-        if not file_path.is_file():
+        if not await asyncio.to_thread(file_path.is_file):
             raise HTTPException(
                 status_code=500,
                 detail=f"Generated certificate missing: {file_path.name}",
@@ -539,6 +622,7 @@ async def generate_endpoint(request: GenerateRequest) -> dict[str, object]:
         "conversion_warning": any(
             Path(p).suffix.lower() == ".docx" for p in result.generated_paths
         ),
+        "warnings": result.warnings,
     }
 
 

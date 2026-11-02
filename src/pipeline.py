@@ -10,14 +10,19 @@ from __future__ import annotations
 import csv
 import logging
 from dataclasses import dataclass, field
-from datetime import date, datetime, time
+from datetime import date, datetime, time, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, assert_never
 
-from src.generator.certificate import CertificateRenderOptions, generate_all
-from src.generator.report import generate_ineligibility_report
+from src.generator.certificate import (
+    CertificateRenderOptions,
+    certificate_warnings,
+    generate_all,
+)
+from src.generator.report import generate_ineligibility_report, next_free_path
 from src.generator.templates import resolve_template_key
-from src.matcher.name_matcher import batch_match
+from src.generator.zoom_host import host_matches_name
+from src.matcher.name_matcher import CONFIRMED_CONFIDENCE, batch_match
 from src.models.certificate import (
     CERequest,
     CertificateOutput,
@@ -26,7 +31,9 @@ from src.models.certificate import (
     MatchAmbiguous,
     MatchNotFound,
     MatchSuccess,
+    allocate_unique_basenames,
 )
+from src.models.participant import extract_name_tokens, normalize_name
 from src.parser.qualtrics import parse_qualtrics_export
 from src.parser.zoom import ZoomParseError, parse_zoom_attendance
 from src.validator.attendance import validate_attendance
@@ -60,7 +67,230 @@ class PipelineResult:
     ineligible: list[IneligibilityEntry]
     errors: list[str]
     generated_paths: list[str] = field(default_factory=list)
+    warnings: list[str] = field(default_factory=list)
+    """Certificates that were generated but should be checked by a person."""
 
+
+_Identity = tuple[str, str, str, frozenset[str]]
+"""Precomputed (CE type, email key, normalized name, name tokens) for one request."""
+
+
+def _identity(request: CERequest) -> _Identity:
+    """Return the comparison keys for one request, normalized once."""
+    email = (request.email or "").strip().casefold()
+    name = normalize_name(request.name_on_certificate)
+    tokens = extract_name_tokens(name) if name else frozenset()
+    return str(request.ce_type), email, name, frozenset(tokens)
+
+
+def _same_identity(older: _Identity, newer: _Identity) -> bool:
+    """True when two precomputed identities are the same person and CE type.
+
+    Emails must not conflict; a shared email alone (a family address) never
+    makes two different names one person.
+    """
+    old_type, old_email, old_name, old_tokens = older
+    new_type, new_email, new_name, new_tokens = newer
+    if old_type != new_type:
+        return False
+    if old_email and new_email and old_email != new_email:
+        return False
+    if not old_name or not new_name:
+        return False
+    if old_name == new_name:
+        return True
+    if not (old_email and new_email):
+        return False
+    return old_tokens <= new_tokens or new_tokens <= old_tokens
+
+
+def _submitted_sort_key(request: CERequest) -> float:
+    """Sortable submission time; untimed requests sort first (see caller)."""
+    return request.submitted_at.timestamp() if request.submitted_at else 0.0
+
+
+def _latest_order(request: CERequest, index: int) -> tuple[bool, float, int]:
+    """Order key where the greatest value is the submission to keep."""
+    return request.submitted_at is not None, _submitted_sort_key(request), index
+
+
+class _DisjointSets:
+    """Union-find that refuses to merge groups with conflicting emails."""
+
+    def __init__(self, size: int) -> None:
+        self.parent = list(range(size))
+        self.email: dict[int, str] = {}
+
+    def find(self, index: int) -> int:
+        """Root of ``index``, compressing the path on the way up."""
+        while self.parent[index] != index:
+            self.parent[index] = self.parent[self.parent[index]]
+            index = self.parent[index]
+        return index
+
+    def union(self, left: int, right: int) -> None:
+        """Merge two groups unless their non-empty emails disagree."""
+        left_root, right_root = self.find(left), self.find(right)
+        if left_root == right_root:
+            return
+        left_email = self.email.get(left_root)
+        right_email = self.email.get(right_root)
+        if left_email and right_email and left_email != right_email:
+            return  # conflicting identities: never merge across emails
+        self.parent[right_root] = left_root
+        if left_email or right_email:
+            self.email[left_root] = left_email or right_email
+        self.email.pop(right_root, None)
+
+    def groups(self) -> list[list[int]]:
+        """Every group of member indices, in first-seen order."""
+        grouped: dict[int, list[int]] = {}
+        for index in range(len(self.parent)):
+            grouped.setdefault(self.find(index), []).append(index)
+        return list(grouped.values())
+
+
+def _group_duplicates(identities: list[_Identity]) -> list[list[int]]:
+    """Group request indices that describe the same person and CE type.
+
+    Links are transitive, so a renamed row connects the rows around it. A
+    group is never merged across conflicting non-empty emails, which keeps
+    two respondents who share a name separate.
+    """
+    sets = _DisjointSets(len(identities))
+    for i in range(len(identities)):
+        for j in range(i + 1, len(identities)):
+            if _same_identity(identities[i], identities[j]):
+                sets.union(i, j)
+    return sets.groups()
+
+
+def split_duplicates(
+    requests: list[CERequest],
+) -> tuple[list[CERequest], list[CERequest]]:
+    """Split survey rows into the ones to use and older duplicates.
+
+    Two requests belong together when ``_same_identity`` links them,
+    directly or through a renamed row. A group is never formed across
+    conflicting non-empty emails, so two respondents who share a name stay
+    separate. The kept row is the latest one in each group; every other row
+    is reported as a duplicate. Both lists keep the original row order.
+    """
+    groups = _group_duplicates([_identity(request) for request in requests])
+    kept: list[int] = []
+    dropped: list[int] = []
+    for members in groups:
+        latest = max(members, key=lambda i: _latest_order(requests[i], i))
+        kept.append(latest)
+        dropped.extend(i for i in members if i != latest)
+    if dropped:
+        logger.info("Ignored %d duplicate survey submission(s).", len(dropped))
+    return [requests[i] for i in sorted(kept)], [requests[i] for i in sorted(dropped)]
+
+
+def dedupe_requests(requests: list[CERequest]) -> list[CERequest]:
+    """Drop duplicate survey submissions, keeping the latest one (see ``split_duplicates``)."""
+    return split_duplicates(requests)[0]
+
+
+def session_window(
+    meeting_start: datetime,
+    meeting_end: datetime,
+    start_time: time | None,
+    end_time: time | None,
+) -> tuple[datetime, datetime]:
+    """Return the window attendance is judged against (see ``judged_window``)."""
+    start, end, _ = judged_window(meeting_start, meeting_end, start_time, end_time)
+    return start, end
+
+
+REPORT_FILENAME = "ineligibility_report.xlsx"
+
+
+def rerun_warnings(
+    eligible: list[CertificateOutput],
+    generated_paths: list[str],
+    report_path: Path | None,
+) -> list[str]:
+    """Say which file is current when a rerun had to add a ``_2`` suffix.
+
+    Files are never overwritten, so a second run into the same folder writes
+    ``X_2.pdf`` next to the older ``X.pdf``; without this, nothing tells the
+    person which of the two to send.
+    """
+    warnings: list[str] = []
+    planned = allocate_unique_basenames(eligible)
+    for stem, generated in zip(planned, generated_paths, strict=False):
+        path = Path(generated)
+        if path.stem != stem:
+            older = f"{stem}{path.suffix}"
+            warnings.append(
+                f"{older} already existed in the output folder, so this run wrote "
+                f"{path.name}; {path.name} is the current file.",
+            )
+    if report_path is not None and report_path.name != REPORT_FILENAME:
+        warnings.append(
+            f"{REPORT_FILENAME} already existed in the output folder, so this run wrote "
+            f"{report_path.name}; {report_path.name} is the current report.",
+        )
+    return warnings
+
+
+def judged_window(
+    meeting_start: datetime,
+    meeting_end: datetime,
+    start_time: time | None,
+    end_time: time | None,
+    *,
+    clip_to_meeting: bool = True,
+) -> tuple[datetime, datetime, str | None]:
+    """Return the attendance window and a warning when Zoom and the entry disagree.
+
+    The window is the overlap of the entered session times and the Zoom
+    meeting. Hosts often open the meeting early and close it late, so the
+    entered times usually win. When the Zoom meeting started after the
+    entered start or ended before the entered end (for example it ended at
+    11:40 for a 9:00 to 12:00 session), nobody could attend the missing part,
+    so only the overlap is judged and a warning says so.
+
+    The entered times are placed on the Zoom meeting's date (multi-day events
+    use the date of the uploaded report). An end time at or before the start
+    rolls to the next day. Without entered times the Zoom meeting window is
+    used. ``clip_to_meeting=False`` skips the overlap for callers whose
+    "meeting" window is only a guess. If the two windows do not overlap at
+    all, the entered times are used and the warning says so.
+    """
+    if start_time is None or end_time is None:
+        return meeting_start, meeting_end, None
+    day = meeting_start.date()
+    entered_start = datetime.combine(day, start_time, tzinfo=meeting_start.tzinfo)
+    entered_end = datetime.combine(day, end_time, tzinfo=meeting_start.tzinfo)
+    if entered_end <= entered_start:
+        entered_end += timedelta(days=1)
+    if not clip_to_meeting:
+        return entered_start, entered_end, None
+
+    start = max(entered_start, meeting_start)
+    end = min(entered_end, meeting_end)
+    if (start, end) == (entered_start, entered_end):
+        return start, end, None
+
+    zoom_text = f"{meeting_start:%H:%M} to {meeting_end:%H:%M}"
+    entered_text = f"{entered_start:%H:%M} to {entered_end:%H:%M}"
+    if end <= start:
+        return (
+            entered_start,
+            entered_end,
+            f"The Zoom meeting ran {zoom_text}, which does not overlap the session "
+            f"entered as {entered_text}. Attendance was judged from {entered_text}; "
+            "check the session date and times.",
+        )
+    return (
+        start,
+        end,
+        f"The Zoom meeting ran {zoom_text}, but the session was entered as "
+        f"{entered_text}. Attendance was judged from {start:%H:%M} to {end:%H:%M}.",
+    )
 
 
 # ── Public entry point ─────────────────────────────────────────────────────────────
@@ -72,7 +302,7 @@ def run_pipeline(  # noqa: PLR0913
     title: str,
     training_date: date,
     instructor: str,
-    ce_credits: int,
+    ce_credits: float,
     ce_types: list[str],
     start_time: time,
     end_time: time,
@@ -84,6 +314,7 @@ def run_pipeline(  # noqa: PLR0913
     is_virtual: bool = True,
     location: str | None = None,
     end_date: date | None = None,
+    exclude_host: bool = False,
 ) -> PipelineResult:
     """Run the full CE certificate generation pipeline.
 
@@ -109,6 +340,8 @@ def run_pipeline(  # noqa: PLR0913
         is_virtual: When True, use virtual Location/Format template strings.
         location: In-person location text (ignored when ``is_virtual``).
         end_date: Optional multi-day end date for the certificate date range.
+        exclude_host: When True, leave out survey names that look like the
+            Zoom meeting host (the desktop app does this on its review step).
 
     Returns:
         ``PipelineResult`` with counts, eligible/ineligible lists, generated
@@ -129,7 +362,8 @@ def run_pipeline(  # noqa: PLR0913
     try:
         # ── Steps 1-2: Parse reports ───────────────────────────────────────
         zoom_session = parse_zoom_attendance(zoom_path)
-        ce_requests = parse_qualtrics_export(qualtrics_path)
+        all_requests = parse_qualtrics_export(qualtrics_path)
+        ce_requests, duplicates = split_duplicates(all_requests)
 
         if not ce_requests:
             logger.info("No CE requests found in Qualtrics report.")
@@ -139,6 +373,16 @@ def run_pipeline(  # noqa: PLR0913
                 ineligible=[],
                 errors=errors,
             )
+
+        if exclude_host and zoom_session.host:
+            host_names = {
+                r.name_on_certificate
+                for r in ce_requests
+                if host_matches_name(zoom_session.host, r.name_on_certificate)
+            }
+            if host_names:
+                logger.info("Excluding Zoom host: %s", ", ".join(sorted(host_names)))
+                skip_names |= host_names
 
         # ── Step 3: Load manual overrides ──────────────────────────────────
         manual_overrides = overrides
@@ -156,17 +400,24 @@ def run_pipeline(  # noqa: PLR0913
             manual_overrides,
         )
 
+        window_start, window_end, window_warning = judged_window(
+            zoom_session.session_start,
+            zoom_session.session_end,
+            start_time,
+            end_time,
+        )
         eligible, ineligible = _classify_requests(
             matches,
             skip_names=skip_names,
             offered_keys=offered_keys,
-            session_start=zoom_session.session_start,
-            session_end=zoom_session.session_end,
+            session_start=window_start,
+            session_end=window_end,
             title=title,
             training_date=training_date,
             instructor=instructor,
             ce_credits=ce_credits,
         )
+        ineligible.extend(_duplicate_entry(request) for request in duplicates)
 
         # ── Step 7: Generate certificates ──────────────────────────────────
         generated_paths: list[str] = []
@@ -178,22 +429,32 @@ def run_pipeline(  # noqa: PLR0913
             )
 
         # ── Step 9: Generate ineligibility report ──────────────────────────
+        report_path: Path | None = None
         if ineligible:
-            report_path = str(Path(output_dir) / "ineligibility_report.xlsx")
-            _ = generate_ineligibility_report(ineligible, report_path)
+            report_path = next_free_path(Path(output_dir) / REPORT_FILENAME)
+            _ = generate_ineligibility_report(ineligible, str(report_path))
 
         # ── Step 10: Log summary ───────────────────────────────────────────
-        logger.info("Total CE requests: %d", len(ce_requests))
+        logger.info("Total CE requests: %d", len(all_requests))
         logger.info("Eligible: %d", len(eligible))
         logger.info("Ineligible: %d", len(ineligible))
         logger.info("Certificates generated: %d", len(generated_paths))
 
         return PipelineResult(
-            total_requests=len(ce_requests),
+            total_requests=len(all_requests),
             eligible=eligible,
             ineligible=ineligible,
             errors=errors,
             generated_paths=generated_paths,
+            warnings=[
+                *([window_warning] if window_warning else []),
+                *rerun_warnings(eligible, generated_paths, report_path),
+                *(
+                    warning
+                    for cert, path in zip(eligible, generated_paths, strict=False)
+                    for warning in certificate_warnings(cert, path)
+                ),
+            ],
         )
 
     except (FileNotFoundError, ZoomParseError, ValueError, KeyError, OSError) as exc:
@@ -210,6 +471,26 @@ def run_pipeline(  # noqa: PLR0913
 # ── Private helpers ─────────────────────────────────────────────────────────────────
 
 
+def _ambiguous_reason(
+    candidates: tuple[str, ...],
+    matches: list[tuple[CERequest, ParticipantAttendance | None, object]],
+) -> str:
+    """Why a request could not be tied to one Zoom attendee."""
+    if len(candidates) != 1:
+        return f"Multiple Zoom matches: {', '.join(candidates)}"
+    [zoom_name] = candidates
+    zoom_email = next(
+        (p.email for _r, p, _m in matches if p is not None and p.name_raw == zoom_name and p.email),
+        None,
+    )
+    joined_as = f"{zoom_name} ({zoom_email})" if zoom_email else zoom_name
+    return (
+        f"The Zoom attendee {joined_as} also matches another request from a different "
+        "person with the same name, so it is not clear whose attendance it is. Check "
+        "who attended and include this person by hand if they did."
+    )
+
+
 def _classify_requests(  # noqa: PLR0913
     matches: list[tuple[CERequest, ParticipantAttendance | None, object]],
     *,
@@ -220,7 +501,7 @@ def _classify_requests(  # noqa: PLR0913
     title: str,
     training_date: date,
     instructor: str,
-    ce_credits: int,
+    ce_credits: float,
 ) -> tuple[list[CertificateOutput], list[IneligibilityEntry]]:
     eligible: list[CertificateOutput] = []
     ineligible: list[IneligibilityEntry] = []
@@ -248,6 +529,20 @@ def _classify_requests(  # noqa: PLR0913
             )
             continue
         match match_result:
+            case MatchSuccess(matched_name=matched, confidence=conf) if conf < CONFIRMED_CONFIDENCE:
+                ineligible.append(
+                    _make_ineligible(
+                        request,
+                        name_zoom=matched,
+                        match_status="needs review",
+                        reason=(
+                            f"Needs review: partial name match to Zoom {matched!r} "
+                            f"({round(conf * 100)}%). Confirm it in Review Matches "
+                            "or add a manual override."
+                        ),
+                        status=EligibilityStatus.NEEDS_REVIEW,
+                    )
+                )
             case MatchSuccess(matched_name=matched):
                 _handle_matched(
                     request,
@@ -268,7 +563,7 @@ def _classify_requests(  # noqa: PLR0913
                         request,
                         name_zoom=", ".join(candidates),
                         match_status="ambiguous",
-                        reason=f"Multiple Zoom matches: {', '.join(candidates)}",
+                        reason=_ambiguous_reason(candidates, matches),
                         status=EligibilityStatus.NAME_MATCH_AMBIGUOUS,
                     )
                 )
@@ -336,6 +631,20 @@ def _make_ineligible(  # noqa: PLR0913
     )
 
 
+def _duplicate_entry(request: CERequest) -> IneligibilityEntry:
+    when = f" (submitted {request.submitted_at:%Y-%m-%d %H:%M})" if request.submitted_at else ""
+    return _make_ineligible(
+        request,
+        name_zoom=None,
+        match_status="duplicate",
+        reason=(
+            f"Duplicate submission{when}: a later response from the same person "
+            "for the same CE type was used instead."
+        ),
+        status=EligibilityStatus.DUPLICATE_SUBMISSION,
+    )
+
+
 def _handle_matched(  # noqa: PLR0913
     request: CERequest,
     participant: ParticipantAttendance | None,
@@ -345,7 +654,7 @@ def _handle_matched(  # noqa: PLR0913
     title: str,
     training_date: date,
     instructor: str,
-    ce_credits: int,
+    ce_credits: float,
     eligible: list[CertificateOutput],
     ineligible: list[IneligibilityEntry],
 ) -> None:

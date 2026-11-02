@@ -9,7 +9,7 @@ import { listen } from "@tauri-apps/api/event";
 import { Loader2, AlertCircle } from "lucide-react";
 import { Toaster, toast } from "sonner";
 
-import { API_BASE } from "@/api/client";
+import { apiFetch } from "@/api/client";
 import { Button } from "@/components/ui/button";
 import StepMetadata from "@/components/StepMetadata";
 import type { MetadataFormData } from "@/components/StepMetadata";
@@ -259,8 +259,13 @@ function WizardApp() {
   }, []);
 
   /** Step 2 → Step 3: save upload data, run initial match API call, advance. */
+  const sessionTimes = wizardState.metadata;
   const goToStep3 = useCallback(async (data: UploadData) => {
     setWizardState((prev) => ({ ...prev, uploadData: data }));
+    // Eligibility is judged against the typed session times, not the Zoom
+    // meeting window (hosts often open early and close late).
+    const startTime = sessionTimes?.startTime ?? "";
+    const endTime = sessionTimes?.endTime ?? "";
     setTransitionPhase("matching");
     setMatchError(null);
 
@@ -268,7 +273,7 @@ function WizardApp() {
       const participants = data.zoomParticipants.map(toParticipantSummary);
       const requests = data.ceRequests.map(toCERequestSummary);
 
-      const response = await fetch(`${API_BASE}/api/match`, {
+      const response = await apiFetch("/api/match", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -277,6 +282,8 @@ function WizardApp() {
           ce_requests: requests,
           session_start: data.sessionStart,
           session_end: data.sessionEnd,
+          start_time: startTime || undefined,
+          end_time: endTime || undefined,
         }),
       });
 
@@ -285,7 +292,8 @@ function WizardApp() {
         throw new Error(`Server returned ${response.status}: ${text}`);
       }
 
-      const body: { matches: MatchEntryWire[] } = await response.json();
+      const body: { matches: MatchEntryWire[]; warnings?: string[] } =
+        await response.json();
 
       const matchData: MatchData = {
         matches: body.matches,
@@ -295,8 +303,11 @@ function WizardApp() {
         ceRequests: requests,
         sessionStart: data.sessionStart,
         sessionEnd: data.sessionEnd,
+        startTime,
+        endTime,
         zoomHost: data.zoomHost,
         zoomPath: data.zoomPath,
+        warnings: body.warnings ?? [],
       };
 
       setWizardState((prev) => ({ ...prev, matchData }));
@@ -310,7 +321,7 @@ function WizardApp() {
       toast.error("Matching failed", { description: message });
       setMatchError(message);
     }
-  }, []);
+  }, [sessionTimes]);
 
   /** Step 3 → Step 4: save (potentially corrected) match data, derive training, advance. */
   const goToStep4 = useCallback((data: MatchData) => {

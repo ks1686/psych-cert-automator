@@ -9,16 +9,16 @@ Built for the GSAPP Psychology Department at Rutgers. Desktop installers are pub
 
 ## What it does
 
-1. Reads a Zoom attendance workbook (who joined, when they left, and who the host was).
-2. Reads a Qualtrics CE request export (name, email, requested CE type, and an optional NY license number).
-3. Matches people across the two files by name.
-4. Keeps a request when late arrival, early departure, and total time missed (including mid-session gaps) are each 15 minutes or less. Waiting-room rows are ignored.
-5. Fills the official Word template for that CE type and writes a PDF.
+1. Reads a Zoom attendance report, `.xlsx` or `.csv` (who joined, when they left, and who the host was). An extra title row above the header is fine.
+2. Reads a Qualtrics CE request export, `.xlsx` or `.csv` (name, email, requested CE type, and an optional NY license number). The standard three header rows are handled, unfinished responses are dropped, and when one person submits more than once for the same CE type only the latest submission is kept.
+3. Matches people across the two files by name, ignoring case, accents, apostrophe style, and honorifics, and uses email to confirm or break ties. Only an exact match is accepted automatically. A partial match (for example a shared first name only) is marked Needs review and gets a certificate only after someone clicks Include in Review Matches, or adds it to `--manual-overrides` on the CLI.
+4. Keeps a request when late arrival, early departure, and total time missed (including mid-session gaps) are each 15 minutes or less, measured against the session start and end times you enter. Waiting-room rows are ignored.
+5. Fills the official Word template for that CE type and writes a PDF. A certificate that converts to two pages, or a name in a script the template fonts cannot print (for example Chinese), is listed as a warning to check before sending.
 6. Writes `ineligibility_report.xlsx` for anyone who was skipped, with the reason.
 
-The Zoom host is pre-excluded and can be included again from Review Matches. Any other row can be excluded with its own checkbox. The same names can be passed to the CLI with repeatable `--exclude`.
+The Zoom host is pre-excluded and can be included again from Review Matches. The CLI also leaves out the host unless you pass `--include-host`. Any other row can be excluded with its own checkbox. The same names can be passed to the CLI with repeatable `--exclude`.
 
-Deleting the output files and running again creates a fresh set of certificates.
+Running again into the same folder never overwrites earlier files: new certificates get a `_2`, `_3`, ... suffix, and so does the ineligibility report. Use an empty folder for a clean set.
 
 ## Certificate types
 
@@ -50,11 +50,11 @@ Download the latest installer from [Releases](https://github.com/ks1686/psych-ce
 | Windows | `.msi` |
 | Linux | `.deb` |
 
-Release builds run on pushes to `main` and on `v*` tags. macOS release builds are signed with Developer ID and notarized when the Apple secrets are present. A local `bun run tauri build` stays unsigned: `signingIdentity` in `src-tauri/tauri.conf.json` is null. The published Linux artifact is the `.deb`. The Tauri bundle list also names `rpm`, but the release workflow uploads the `.deb`.
+Release builds run on pushes to `main` and on `v*` tags. macOS release builds are signed with Developer ID and notarized when the Apple secrets are present. A local `bun run tauri build` stays unsigned: `signingIdentity` in `src-tauri/tauri.conf.json` is null. Windows `.msi` builds are not code-signed yet, so SmartScreen warns on first run until a signing certificate is added to the release workflow. The published Linux artifact is the `.deb`. The Tauri bundle list also names `rpm`, but the release workflow uploads the `.deb`.
 
-The app is offline. Its Python sidecar listens on `http://127.0.0.1:8008`.
+The app is offline. The desktop app starts its Python sidecar on a random free port on `127.0.0.1` with a random token generated for that launch; every API request must carry the token. Run on its own (`uv run python src/backends/main.py`), the sidecar listens on `http://127.0.0.1:8008` without a token, for development and the browser e2e tests.
 
-The wizard has four steps: upload the two workbooks, enter the session, review matches, then generate. Session metadata can be saved as JSON under `~/.psych-cert-gen/sessions` through `POST /api/sessions`. There is no separate CLI config file. The CLI flags are the script interface, and that JSON API is the saved-session interface.
+The wizard has four steps: upload the two reports, enter the session, review matches, then generate. Session metadata can be saved as JSON under `~/.psych-cert-gen/sessions` through `POST /api/sessions`. There is no separate CLI config file. The CLI flags are the script interface, and that JSON API is the saved-session interface.
 
 ## CLI
 
@@ -84,15 +84,16 @@ uv run python certgen.py \
 | `--date` | yes | Start date, `YYYY-MM-DD` |
 | `--end-date` | no | Multi-day end date, `YYYY-MM-DD` |
 | `--instructor` | yes | Instructor name printed on the certificate |
-| `--ce-credits` | yes | Integer credit count |
+| `--ce-credits` | yes | Credit count in steps of 0.25, for example `3` or `1.5` (printed as `1.5`, never `3.0`) |
 | `--ce-types` | yes | Comma-separated types offered, for example `APA,NASP,NY,NBCC` |
 | `--start-time` | yes | Session start, `HH:MM` |
 | `--end-time` | yes | Session end, `HH:MM` |
 | `--in-person` | no | In-person wording. Default is virtual |
 | `--location` | with `--in-person` | Location text. Required when `--in-person` is set |
 | `--exclude` | no | Qualtrics certificate name to skip. Repeat the flag for more names |
-| `--zoom-report` | yes | Zoom attendance `.xlsx` |
-| `--qualtrics-report` | yes | Qualtrics export `.xlsx` |
+| `--include-host` | no | Issue a certificate to the Zoom host too. Default leaves the host out |
+| `--zoom-report` | yes | Zoom attendance `.xlsx` or `.csv` |
+| `--qualtrics-report` | yes | Qualtrics export `.xlsx` or `.csv` |
 | `--output-dir` | no | Output directory. Default `./output` |
 | `--manual-overrides` | no | CSV of Qualtrics name to Zoom name overrides |
 
@@ -104,7 +105,7 @@ A Qualtrics row with an empty name or an empty CE type is skipped by the parser.
 | --- | --- | --- |
 | Python | 3.12+ | [python.org](https://www.python.org/downloads/) |
 | uv | latest | see uv docs |
-| Rust | 1.80+ | [rustup](https://rustup.rs/) |
+| Rust | 1.87+ (locked dependencies such as `zvariant_utils` need it) | [rustup](https://rustup.rs/) |
 | Bun | 1.3+ | [bun.sh](https://bun.sh/) |
 | poppler | 24.02 for golden tests | `poppler-utils` (`pdftoppm`, `pdftotext`, `pdfinfo`, `pdffonts`) |
 
@@ -114,12 +115,23 @@ Frontend packages use Bun, not npm or pnpm.
 uv sync
 bun install
 
-# Terminal 1: API at http://localhost:8008
+# Terminal 1: API at http://127.0.0.1:8008 (no token: development mode)
 uv run python src/backends/main.py
 
 # Terminal 2: desktop app with hot reload
 bun run tauri dev
 ```
+
+Debug builds (`tauri dev`) always talk to port 8008 with the token
+`psych-cert-dev`, so they find the API from terminal 1 and leave it running
+when the window closes. If nothing is listening on 8008 they start the
+bundled sidecar there instead. Set `PSYCH_CERT_DEV_PORT` or
+`PSYCH_CERT_DEV_TOKEN` to change either value (start the API with the same
+`PSYCH_CERT_PORT` and `PSYCH_CERT_TOKEN`). Release builds ignore all of this
+and pick a random port and token on every launch.
+
+The Tauri window needs a desktop session with WebKitGTK (Linux), WebView2
+(Windows), or macOS; it cannot run on a headless server.
 
 ### Tests
 

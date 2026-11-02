@@ -22,8 +22,10 @@ export type IneligibleStatus =
   | "Not Found"
   | "Attendance"
   | "Ambiguous"
+  | "Needs Review"
   | "Excluded"
-  | "Not Offered";
+  | "Not Offered"
+  | "Duplicate";
 
 interface IneligibilityReportProps {
   entries: IneligibleResult[];
@@ -52,6 +54,13 @@ function statusBadge(status: IneligibleStatus) {
           Ambiguous
         </Badge>
       );
+    case "Needs Review":
+      return (
+        <Badge className="border-transparent bg-amber-100 text-amber-800 dark:bg-amber-900 dark:text-amber-100">
+          <AlertTriangle className="mr-1 h-3 w-3" />
+          Needs Review
+        </Badge>
+      );
     case "Excluded":
       return (
         <Badge className="border-transparent bg-slate-100 text-slate-800 dark:bg-slate-800 dark:text-slate-100">
@@ -64,6 +73,13 @@ function statusBadge(status: IneligibleStatus) {
         <Badge className="border-transparent bg-violet-100 text-violet-800 dark:bg-violet-900 dark:text-violet-100">
           <AlertTriangle className="mr-1 h-3 w-3" />
           Not Offered
+        </Badge>
+      );
+    case "Duplicate":
+      return (
+        <Badge className="border-transparent bg-slate-100 text-slate-800 dark:bg-slate-800 dark:text-slate-100">
+          <XCircle className="mr-1 h-3 w-3" />
+          Duplicate
         </Badge>
       );
     default: {
@@ -113,8 +129,10 @@ export function IneligibilityReport({ entries }: IneligibilityReportProps) {
       "Not Found": 0,
       Attendance: 0,
       Ambiguous: 0,
+      "Needs Review": 0,
       Excluded: 0,
       "Not Offered": 0,
+      Duplicate: 0,
     };
     for (const e of entries) {
       counts[e.status] += 1;
@@ -133,7 +151,7 @@ export function IneligibilityReport({ entries }: IneligibilityReportProps) {
       </h3>
 
       <div className="mb-3 flex flex-wrap items-center gap-1">
-        {(["All", "Not Found", "Attendance", "Ambiguous", "Excluded", "Not Offered"] as const).map(
+        {(["All", "Not Found", "Attendance", "Ambiguous", "Needs Review", "Excluded", "Not Offered", "Duplicate"] as const).map(
           (filter) => (
             <Button
               key={filter}

@@ -9,8 +9,18 @@ unambiguous match:
 4. First-name partial match — Qualtrics first name matches a single-token Zoom entry
    (confidence 0.7)
 
-After individual matching, shared Zoom matches (multiple Qualtrics names
-resolving to the same Zoom attendee) are reclassified as ambiguous.
+When both sides carry an email, an identical (case-insensitive) email breaks
+ties between same-named attendees and confirms a partial name match
+(confidence 1.0). With no name relation at all, a unique email match is
+offered at confidence 0.8.
+
+Anything below 1.0 is a suggestion only: callers must treat it as
+"needs review" and require an explicit confirmation (a manual override)
+before issuing a certificate.
+
+Matching is per CE request (name plus email). After individual matching, a
+Zoom attendee claimed by two or more different people is reclassified as
+ambiguous, unless exactly one of them has the Zoom attendee's email.
 """
 
 from __future__ import annotations
@@ -130,35 +140,71 @@ def _match_first_name_partial(
     return None
 
 
+EMAIL_ONLY_CONFIDENCE = 0.8
+"""Confidence for an email-only match (names unrelated)."""
+
+CONFIRMED_CONFIDENCE = 1.0
+"""Confidence at or above which a match needs no human review."""
+
+
+def _email_key(email: str | None) -> str | None:
+    if email is None:
+        return None
+    key = email.strip().casefold()
+    return key or None
+
+
+def _apply_email(
+    outcome: MatchSuccess | MatchAmbiguous | None,
+    q_email: str | None,
+    zoom_email_keys: dict[str, str | None],
+) -> MatchSuccess | MatchAmbiguous | None:
+    """Use the Qualtrics email to break ties and confirm partial name matches."""
+    if q_email is None:
+        return outcome
+    match outcome:
+        case MatchAmbiguous(candidates=candidates):
+            confirmed = _only([c for c in candidates if zoom_email_keys.get(c) == q_email])
+        case MatchSuccess(matched_name=matched, confidence=conf):
+            same_email = zoom_email_keys.get(matched) == q_email
+            confirmed = matched if conf < CONFIRMED_CONFIDENCE and same_email else None
+        case None:
+            same = _only([raw for raw, key in zoom_email_keys.items() if key == q_email])
+            if same is None:
+                return None
+            return MatchSuccess(matched_name=same, confidence=EMAIL_ONLY_CONFIDENCE)
+        case _:
+            assert_never(outcome)
+    if confirmed is None:
+        return outcome
+    return MatchSuccess(matched_name=confirmed, confidence=CONFIRMED_CONFIDENCE)
+
+
+def _only(names: list[str]) -> str | None:
+    """The single name in ``names``, or ``None`` when there are 0 or 2+."""
+    return names[0] if len(names) == 1 else None
+
+
 # ── Post-processing ───────────────────────────────────────────────────────────
 
 
-def _resolve_shared_matches(results: dict[str, MatchResult]) -> None:
-    """Reclassify Qualtrics names that all resolved to the same Zoom attendee.
-
-    When two or more Qualtrics names produced ``MatchSuccess`` pointing at
-    the identical Zoom name, every such Qualtrics entry is upgraded to
-    ``MatchAmbiguous`` — a human must disambiguate.
-
-    Args:
-        results: Mapping mutated in-place.
-    """
-    zoom_to_qualtrics: dict[str, list[str]] = {}
-    for q_name, result in results.items():
-        match result:
-            case MatchSuccess(matched_name=matched):
-                zoom_to_qualtrics.setdefault(matched, []).append(q_name)
-            case MatchAmbiguous():
-                pass
-            case MatchNotFound():
-                pass
-            case _:
-                assert_never(result)
-
-    for zoom_name, q_names in zoom_to_qualtrics.items():
-        if len(q_names) > 1:
-            for q_name in q_names:
-                results[q_name] = MatchAmbiguous(candidates=(zoom_name,))
+def _match_by_name(  # noqa: PLR0913
+    q_norm: str,
+    q_tokens: frozenset[str],
+    q_first: str,
+    norm_to_zoom: dict[str, list[str]],
+    zoom_entries: list[tuple[str, frozenset[str]]],
+    single_token_zooms: dict[str, str],
+) -> MatchSuccess | MatchAmbiguous | None:
+    """Run strategies 2-4 in order and return the first outcome."""
+    if not q_norm:
+        return None
+    outcome = _match_exact_normalized(q_norm, norm_to_zoom)
+    if outcome is None:
+        outcome = _match_token_set(q_tokens, zoom_entries)
+    if outcome is None:
+        outcome = _match_first_name_partial(q_first, single_token_zooms)
+    return outcome
 
 
 # ── Public API ────────────────────────────────────────────────────────────────
@@ -168,23 +214,93 @@ def match_participants(
     zoom_names: list[str],
     qualtrics_names: list[str],
     manual_overrides: dict[str, str] | None = None,
+    *,
+    zoom_emails: dict[str, str | None] | None = None,
+    qualtrics_emails: dict[str, str | None] | None = None,
 ) -> dict[str, MatchResult]:
     """Match every Qualtrics CE-request name to a Zoom attendance name.
 
-    Runs the four-strategy pipeline for each Qualtrics name, stopping at the
-    first unambiguous match.  After per-name matching, shared Zoom matches
-    are flagged as ambiguous.
+    Name-keyed convenience wrapper around ``match_requests``: each distinct
+    Qualtrics name is matched once, with its email (if any) as a tiebreaker.
+    Use ``match_requests`` when two different people can share a name.
 
     Args:
         zoom_names: Raw Zoom participant names (from attendance export).
         qualtrics_names: Raw Qualtrics name-on-certificate strings.
         manual_overrides: Optional ``{qualtrics_name: zoom_name}`` mapping
             for known edge cases.
+        zoom_emails: Optional ``{zoom_name: email}`` used as a tiebreaker.
+        qualtrics_emails: Optional ``{qualtrics_name: email}``.
 
     Returns:
         Dictionary keyed by each Qualtrics name → its ``MatchResult``.
     """
-    # ── Precompute normalised forms ──
+    unique = list(dict.fromkeys(qualtrics_names))
+    emails = qualtrics_emails or {}
+    results = match_requests(
+        zoom_names,
+        [(name, emails.get(name)) for name in unique],
+        manual_overrides,
+        zoom_emails=zoom_emails,
+    )
+    return dict(zip(unique, results, strict=True))
+
+
+def person_groups(requests: list[tuple[str, str | None]]) -> list[int]:
+    """Assign a person id to each ``(name, email)`` request.
+
+    Two requests belong to the same person when their normalized names are
+    equal and their emails do not conflict (one is missing, or both match
+    case-insensitively). Same name with different emails, or different
+    names with a shared email, are different people.
+
+    Returns:
+        A list with one person id per request, in request order.
+    """
+    people: list[tuple[str, str | None]] = []
+    ids: list[int] = []
+    for name, email in requests:
+        norm = normalize_name(name)
+        key = _email_key(email)
+        found = None
+        for pid, (p_norm, p_email) in enumerate(people):
+            if p_norm == norm and (p_email is None or key is None or p_email == key):
+                found = pid
+                if p_email is None and key is not None:
+                    people[pid] = (p_norm, key)
+                break
+        if found is None:
+            people.append((norm, key))
+            found = len(people) - 1
+        ids.append(found)
+    return ids
+
+
+def match_requests(
+    zoom_names: list[str],
+    requests: list[tuple[str, str | None]],
+    manual_overrides: dict[str, str] | None = None,
+    *,
+    zoom_emails: dict[str, str | None] | None = None,
+) -> list[MatchResult]:
+    """Match each ``(name, email)`` CE request to a Zoom attendance name.
+
+    Results are per request, so two different people who share a name (or
+    an email) never share a match. Requests from the same person (see
+    ``person_groups``) may share a Zoom attendee; different people may not:
+    when two people land on one Zoom attendee, the one whose email equals the
+    Zoom email keeps it and the others become ambiguous; with no email
+    winner, all of them become ambiguous.
+
+    Args:
+        zoom_names: Unique Zoom participant labels.
+        requests: ``(name_on_certificate, email)`` per CE request.
+        manual_overrides: Optional ``{qualtrics_name: zoom_name}`` mapping.
+        zoom_emails: Optional ``{zoom_name: email}`` used as a tiebreaker.
+
+    Returns:
+        One ``MatchResult`` per request, in request order.
+    """
     norm_to_zoom: dict[str, list[str]] = {}
     zoom_entries: list[tuple[str, frozenset[str]]] = []
     single_token_zooms: dict[str, str] = {}
@@ -199,31 +315,96 @@ def match_participants(
             single_token_zooms[raw] = token_list[0]
 
     overrides = manual_overrides if manual_overrides is not None else {}
-    results: dict[str, MatchResult] = {}
+    zoom_email_keys = {
+        raw: _email_key((zoom_emails or {}).get(raw)) for raw in zoom_names
+    }
+    results: list[MatchResult] = []
 
-    for q_raw in qualtrics_names:
+    for q_raw, q_email_raw in requests:
         q_norm = normalize_name(q_raw)
         q_tokens = extract_name_tokens(q_norm)
         q_first = q_norm.split()[0] if q_norm else ""
-        match_outcome: MatchAmbiguous | MatchSuccess | None = None
-
-        match_outcome = _match_manual_override(q_raw, overrides)
-
-        if match_outcome is None:
-            match_outcome = _match_exact_normalized(q_norm, norm_to_zoom)
-
-        if match_outcome is None:
-            match_outcome = _match_token_set(q_tokens, zoom_entries)
-
-        if match_outcome is None:
-            match_outcome = _match_first_name_partial(q_first, single_token_zooms)
-
-        results[q_raw] = (
-            match_outcome if match_outcome is not None else MatchNotFound()
+        q_email = _email_key(q_email_raw)
+        match_outcome: MatchAmbiguous | MatchSuccess | None = _match_manual_override(
+            q_raw, overrides,
         )
+        if match_outcome is not None:
+            match_outcome = _apply_email(
+                _override_target(match_outcome.matched_name, norm_to_zoom),
+                q_email,
+                zoom_email_keys,
+            )
+        else:
+            match_outcome = _apply_email(
+                _match_by_name(
+                    q_norm, q_tokens, q_first, norm_to_zoom, zoom_entries, single_token_zooms
+                ),
+                q_email,
+                zoom_email_keys,
+            )
+        results.append(match_outcome if match_outcome is not None else MatchNotFound())
 
-    _resolve_shared_matches(results)
+    _resolve_shared_people(
+        results,
+        person_groups(requests),
+        [_email_key(email) for _name, email in requests],
+        zoom_email_keys,
+    )
     return results
+
+
+def _override_target(
+    zoom_name: str,
+    norm_to_zoom: dict[str, list[str]],
+) -> MatchSuccess | MatchAmbiguous:
+    """Resolve a manual override that names a Zoom display name.
+
+    When several Zoom attendees share that display name (they are labelled
+    ``"Name (email)"``), the override is ambiguous until the email picks one.
+    """
+    if any(zoom_name in raws for raws in norm_to_zoom.values()):
+        return MatchSuccess(matched_name=zoom_name, confidence=1.0)
+    same = norm_to_zoom.get(normalize_name(zoom_name), [])
+    if len(same) > 1:
+        return MatchAmbiguous(candidates=tuple(same))
+    if len(same) == 1:
+        return MatchSuccess(matched_name=same[0], confidence=1.0)
+    return MatchSuccess(matched_name=zoom_name, confidence=1.0)
+
+
+def _resolve_shared_people(
+    results: list[MatchResult],
+    person_ids: list[int],
+    request_emails: list[str | None],
+    zoom_email_keys: dict[str, str | None],
+) -> None:
+    """Flag Zoom attendees claimed by two or more different people (in place)."""
+    claims: dict[str, dict[int, list[int]]] = {}
+    for i, result in enumerate(results):
+        match result:
+            case MatchSuccess(matched_name=matched):
+                claims.setdefault(matched, {}).setdefault(person_ids[i], []).append(i)
+            case MatchAmbiguous() | MatchNotFound():
+                pass
+            case _:
+                assert_never(result)
+
+    for zoom_name, by_person in claims.items():
+        if len(by_person) < 2:  # noqa: PLR2004
+            continue
+        zoom_email = zoom_email_keys.get(zoom_name)
+        winners = [
+            pid
+            for pid, idxs in by_person.items()
+            if zoom_email is not None
+            and any(request_emails[i] == zoom_email for i in idxs)
+        ]
+        keep = winners[0] if len(winners) == 1 else None
+        for pid, idxs in by_person.items():
+            if pid == keep:
+                continue
+            for i in idxs:
+                results[i] = MatchAmbiguous(candidates=(zoom_name,))
 
 
 def batch_match(
@@ -233,8 +414,8 @@ def batch_match(
 ) -> list[tuple[CERequest, ParticipantAttendance | None, MatchResult]]:
     """Convenience wrapper that works directly with typed model objects.
 
-    Extracts raw names from *zoom_participants* and *ce_requests*, runs
-    ``match_participants``, and returns a triple for each CE request.
+    Matches each CE request on its own (name plus email), so two people who
+    share a name or an email are never merged.
 
     Args:
         zoom_participants: Aggregated Zoom attendance records.
@@ -251,13 +432,15 @@ def batch_match(
         if p.name_raw not in zoom_lookup:
             zoom_lookup[p.name_raw] = p
 
-    zoom_names = list(zoom_lookup.keys())
-    qualtrics_names = [r.name_on_certificate for r in ce_requests]
-    match_results = match_participants(zoom_names, qualtrics_names, manual_overrides)
+    match_results = match_requests(
+        list(zoom_lookup.keys()),
+        [(r.name_on_certificate, r.email) for r in ce_requests],
+        manual_overrides,
+        zoom_emails={name: p.email for name, p in zoom_lookup.items()},
+    )
 
     output: list[tuple[CERequest, ParticipantAttendance | None, MatchResult]] = []
-    for request in ce_requests:
-        result = match_results[request.name_on_certificate]
+    for request, result in zip(ce_requests, match_results, strict=True):
         participant: ParticipantAttendance | None = None
         match result:
             case MatchSuccess(matched_name=matched):

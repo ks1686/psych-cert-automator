@@ -1,5 +1,5 @@
 import { useState, useMemo, useCallback } from "react";
-import { API_BASE } from "@/api/client";
+import { apiFetch } from "@/api/client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -66,6 +66,20 @@ const EMPTY_FORM: MetadataFormData = {
   location: "",
 };
 
+/** CE credits: greater than 0, at most 100, in steps of 0.25 (e.g. 1.5). */
+export function ceCreditsError(value: number): string | null {
+  if (!Number.isFinite(value) || value <= 0) {
+    return "CE credits must be greater than 0.";
+  }
+  if (value > 100) {
+    return "CE credits must be at most 100.";
+  }
+  if (!Number.isInteger(value * 4)) {
+    return "CE credits must be in steps of 0.25 (for example 1, 1.5, or 2.75).";
+  }
+  return null;
+}
+
 function validateFields(data: MetadataFormData): Record<string, string> {
   const errors: Record<string, string> = {};
 
@@ -85,8 +99,9 @@ function validateFields(data: MetadataFormData): Record<string, string> {
   if (!data.instructor.trim()) {
     errors.instructor = "Instructor name is required.";
   }
-  if (!Number.isFinite(data.ceCredits) || data.ceCredits < 1) {
-    errors.ceCredits = "CE credits must be at least 1.";
+  const creditsError = ceCreditsError(data.ceCredits);
+  if (creditsError) {
+    errors.ceCredits = creditsError;
   }
   if (
     !data.ceTypes.apa &&
@@ -171,7 +186,7 @@ export default function StepMetadata({
   const handleSave = useCallback(async () => {
     setSaveStatus("saving");
     try {
-      const response = await fetch(`${API_BASE}/api/sessions`, {
+      const response = await apiFetch("/api/sessions", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -203,7 +218,7 @@ export default function StepMetadata({
   const handleLoad = useCallback(async () => {
     setLoadError(null);
     try {
-      const response = await fetch(`${API_BASE}/api/sessions`);
+      const response = await apiFetch("/api/sessions");
       if (!response.ok) {
         throw new Error(`Server responded with ${response.status}`);
       }
@@ -345,7 +360,9 @@ export default function StepMetadata({
           <Input
             id="ceCredits"
             type="number"
-            min={1}
+            min={0.25}
+            max={100}
+            step={0.25}
             placeholder="3"
             value={formData.ceCredits || ""}
             onChange={(e) => {
@@ -446,8 +463,9 @@ export default function StepMetadata({
         {/* Start Time & End Time */}
         <div className="space-y-2">
           <p className="text-xs text-muted-foreground">
-            These times are printed on certificates. Attendance eligibility uses
-            the session window from the Zoom attendance report.
+            These times are printed on certificates and are also the window
+            attendance is checked against (on the date of the Zoom attendance
+            report), so join and leave times outside them do not count.
           </p>
         <div className="grid grid-cols-2 gap-4">
           <div className="space-y-2">

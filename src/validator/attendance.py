@@ -7,6 +7,7 @@ based on join/leave times relative to the session window.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from itertools import pairwise
 from typing import TYPE_CHECKING
 
 from src.models.participant import ParticipantAttendance, normalize_name
@@ -74,24 +75,31 @@ def validate_attendance(
         3. Total missed time (late join + early leave + mid-session gaps)
            must be ≤ 15 minutes.
 
+    Only time inside ``[session_start, session_end]`` counts: segments are
+    clipped to the window and overlapping segments (two devices) are merged
+    before late join, early leave, and gaps are measured. A reconnect before
+    the session starts or after it ends is therefore never a gap.
+
     Args:
-        participant: Aggregated attendance data for one person. Must contain at
-            least one non-waiting-room segment sorted by ``join_time``.
+        participant: Aggregated attendance data for one person.
         session_start: Official session start datetime.
         session_end: Official session end datetime.
 
     Returns:
         ``AttendanceResult`` with eligibility determination and detailed metrics.
     """
-    segments = participant.segments
+    spans = _spans_in_window(participant.segments, session_start, session_end)
 
-    if not segments:
+    if not spans:
         return _result_when_no_segments(session_start, session_end)
 
-    late_join = _clamp_to_positive_minutes(participant.first_join - session_start)
-    early_leave = _clamp_to_positive_minutes(session_end - participant.last_leave)
+    late_join = _clamp_to_positive_minutes(spans[0][0] - session_start)
+    early_leave = _clamp_to_positive_minutes(session_end - spans[-1][1])
 
-    total_gaps = _compute_mid_session_gaps(segments)
+    total_gaps = sum(
+        _minutes_between(prev_end, next_start)
+        for (_, prev_end), (next_start, _) in pairwise(spans)
+    )
 
     total_missed = round(late_join + early_leave + total_gaps, 1)
 
@@ -168,30 +176,29 @@ def _clamp_to_positive_minutes(td: timedelta) -> float:
     return minutes if minutes > 0 else 0.0
 
 
-def _compute_mid_session_gaps(segments: tuple[AttendanceRecord, ...]) -> float:
-    """Sum gaps (in minutes) between consecutive leave/join pairs.
-
-    A gap is the time between a segment's ``leave_time`` and the next
-    segment's ``join_time``. Only positive gaps are counted (negative
-    overlaps are clamped to 0.0).
-
-    Args:
-        segments: Non-waiting-room segments sorted by ``join_time``.
-
-    Returns:
-        Total gap minutes as a float (unrounded — rounding is applied
-        by the caller).
-    """
-    total_gaps = 0.0
-
-    for i in range(len(segments) - 1):
-        prev_leave = segments[i].leave_time
-        next_join = segments[i + 1].join_time
-        gap = (next_join - prev_leave).total_seconds() / 60.0
-        if gap > 0:
-            total_gaps += gap
-
-    return total_gaps
+def _spans_in_window(
+    segments: tuple[AttendanceRecord, ...],
+    session_start: datetime,
+    session_end: datetime,
+) -> list[tuple[datetime, datetime]]:
+    """Clip segments to the session window and merge overlaps, in time order."""
+    clipped = sorted(
+        (max(seg.join_time, session_start), min(seg.leave_time, session_end))
+        for seg in segments
+        if not seg.is_waiting_room
+    )
+    # A zero-length window (start == end) still accepts a segment touching it.
+    zero_window = session_end <= session_start
+    merged: list[tuple[datetime, datetime]] = []
+    for start, end in clipped:
+        if end < start or (end == start and not zero_window):
+            continue
+        if merged and start <= merged[-1][1]:
+            if end > merged[-1][1]:
+                merged[-1] = (merged[-1][0], end)
+        else:
+            merged.append((start, end))
+    return merged
 
 
 def _result_when_no_segments(

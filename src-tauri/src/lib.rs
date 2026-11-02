@@ -12,32 +12,138 @@ type SidecarHandle = Arc<Mutex<Option<CommandChild>>>;
 /// Number of trailing stderr lines kept for crash diagnostics.
 const STDERR_TAIL_LINES: usize = 20;
 
+/// Header the sidecar checks on every request (see src/backends/main.py).
+const TOKEN_HEADER: &str = "X-Psych-Cert-Token";
+
+/// Port used if the OS refuses to hand out a free one, and the fixed port
+/// debug builds (`bun run tauri dev`) use so a separately started API
+/// (`uv run python src/backends/main.py`) is reachable.
+const FALLBACK_PORT: u16 = 8008;
+
+/// Fixed token for debug builds only. Release builds always use a random one.
+const DEV_TOKEN: &str = "psych-cert-dev";
+
+/// Placeholder in tauri.conf.json's CSP that is narrowed to the real port.
+const CSP_ANY_LOCAL_PORT: &str = "http://127.0.0.1:*";
+
+/// Per-launch connection details for the Python sidecar.
+///
+/// Release builds choose a fresh random port and a 256-bit random token on
+/// every launch. Debug builds use port 8008 and the token `psych-cert-dev`
+/// (override with PSYCH_CERT_DEV_PORT and PSYCH_CERT_DEV_TOKEN) so the
+/// README's two-terminal dev setup can connect. The sidecar receives them
+/// through environment variables and rejects any request without the token,
+/// so other local processes and web pages cannot drive the API. The webview
+/// reads them through the `backend_config` command.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
+pub struct BackendConfig {
+    port: u16,
+    token: String,
+}
+
+impl BackendConfig {
+    /// Fixed settings for debug builds, random ones for release builds.
+    fn for_build(debug: bool, env: impl Fn(&str) -> Option<String>) -> Self {
+        if !debug {
+            return Self::generate();
+        }
+        let port = env("PSYCH_CERT_DEV_PORT")
+            .and_then(|raw| raw.trim().parse().ok())
+            .unwrap_or(FALLBACK_PORT);
+        let token = env("PSYCH_CERT_DEV_TOKEN")
+            .map(|raw| raw.trim().to_string())
+            .filter(|raw| !raw.is_empty())
+            .unwrap_or_else(|| DEV_TOKEN.to_string());
+        Self { port, token }
+    }
+
+    fn generate() -> Self {
+        let port = std::net::TcpListener::bind("127.0.0.1:0")
+            .and_then(|listener| listener.local_addr())
+            .map(|addr| addr.port())
+            .unwrap_or(FALLBACK_PORT);
+        let mut bytes = [0u8; 32];
+        getrandom::getrandom(&mut bytes).expect("OS random number generator unavailable");
+        let token = bytes.iter().map(|b| format!("{b:02x}")).collect();
+        Self { port, token }
+    }
+
+    fn url(&self, path: &str) -> String {
+        format!("http://127.0.0.1:{}{}", self.port, path)
+    }
+
+    /// True when an API answering with this token is already listening
+    /// (the README's dev setup starts one in another terminal).
+    fn already_running(&self) -> bool {
+        ureq::get(&self.url("/health"))
+            .set(TOKEN_HEADER, &self.token)
+            .timeout(std::time::Duration::from_millis(500))
+            .call()
+            .map(|r| r.status() == 200)
+            .unwrap_or(false)
+    }
+}
+
+/// Narrow the CSP's `http://127.0.0.1:*` to the one port the API uses.
+fn pin_csp_port(csp: &str, port: u16) -> String {
+    csp.replace(CSP_ANY_LOCAL_PORT, &format!("http://127.0.0.1:{port}"))
+}
+
+/// Hand the sidecar port and token to the frontend.
+#[tauri::command]
+fn backend_config(config: tauri::State<'_, BackendConfig>) -> BackendConfig {
+    config.inner().clone()
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let sidecar: SidecarHandle = Arc::new(Mutex::new(None));
     let sidecar_for_setup = sidecar.clone();
+    let config = BackendConfig::for_build(cfg!(debug_assertions), |key| std::env::var(key).ok());
+    let config_for_setup = config.clone();
+
+    // Tauri injects this CSP into every page it serves at runtime, so the
+    // webview can only reach the API on this launch's port.
+    let mut context = tauri::generate_context!();
+    let security = &mut context.config_mut().app.security;
+    if let Some(csp) = security.csp.as_ref() {
+        let pinned = pin_csp_port(&csp.to_string(), config.port);
+        security.csp = Some(tauri::utils::config::Csp::Policy(pinned));
+    }
 
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
+        .manage(config.clone())
+        .invoke_handler(tauri::generate_handler![backend_config])
         .setup(move |app| {
             let handle = app.handle().clone();
-            spawn_sidecar(&handle, &sidecar_for_setup);
+            if cfg!(debug_assertions) && config_for_setup.already_running() {
+                // Dev: reuse the API started in another terminal.
+                eprintln!(
+                    "[sidecar] using the API already running on port {}",
+                    config_for_setup.port
+                );
+                watch_health(&handle, &config_for_setup, Arc::new(AtomicBool::new(false)));
+            } else {
+                spawn_sidecar(&handle, &sidecar_for_setup, &config_for_setup);
+            }
             let retry_handle = handle.clone();
             let retry_sidecar = sidecar_for_setup.clone();
+            let retry_config = config_for_setup.clone();
             let _ = handle.listen("retry-sidecar", move |_| {
-                respawn_sidecar(&retry_handle, &retry_sidecar);
+                respawn_sidecar(&retry_handle, &retry_sidecar, &retry_config);
             });
             Ok(())
         })
-        .build(tauri::generate_context!())
+        .build(context)
         .expect("error while building tauri application")
         .run({
             let sidecar = sidecar.clone();
             move |_app_handle, event| {
                 if let RunEvent::ExitRequested { .. } = event {
-                    shutdown_sidecar(&sidecar);
+                    shutdown_sidecar(&sidecar, &config);
                 }
             }
         });
@@ -47,14 +153,14 @@ pub fn run() {
 
 /// Spawn the Python FastAPI sidecar, wire up stdout/stderr forwarding,
 /// and begin health-check polling.
-fn respawn_sidecar(handle: &tauri::AppHandle, sidecar: &SidecarHandle) {
+fn respawn_sidecar(handle: &tauri::AppHandle, sidecar: &SidecarHandle, config: &BackendConfig) {
     if let Some(child) = sidecar.lock().unwrap().take() {
         let _ = child.kill();
     }
-    spawn_sidecar(handle, sidecar);
+    spawn_sidecar(handle, sidecar, config);
 }
 
-fn spawn_sidecar(handle: &tauri::AppHandle, sidecar: &SidecarHandle) {
+fn spawn_sidecar(handle: &tauri::AppHandle, sidecar: &SidecarHandle, config: &BackendConfig) {
     // Resolve and spawn the sidecar binary declared in tauri.conf.json.
     //
     // NOTE: use the *basename* "psych-cert-gen", not "bin/api/psych-cert-gen".
@@ -68,7 +174,11 @@ fn spawn_sidecar(handle: &tauri::AppHandle, sidecar: &SidecarHandle) {
     // backend never started.
     eprintln!("[sidecar] resolving psych-cert-gen ...");
     let mut rx = match handle.shell().sidecar("psych-cert-gen") {
-        Ok(cmd) => match cmd.spawn() {
+        Ok(cmd) => match cmd
+            .env("PSYCH_CERT_PORT", config.port.to_string())
+            .env("PSYCH_CERT_TOKEN", &config.token)
+            .spawn()
+        {
             Ok((rx, child)) => {
                 eprintln!("[sidecar] spawned OK, pid={:?}", child.pid());
                 *sidecar.lock().unwrap() = Some(child);
@@ -157,19 +267,32 @@ fn spawn_sidecar(handle: &tauri::AppHandle, sidecar: &SidecarHandle) {
     });
 
     // ── health-check polling ────────────────────────────────────────────
+    watch_health(handle, config, became_healthy);
+}
+
+fn watch_health(
+    handle: &tauri::AppHandle,
+    config: &BackendConfig,
+    became_healthy: Arc<AtomicBool>,
+) {
     let hc_handle = handle.clone();
+    let hc_config = config.clone();
     tauri::async_runtime::spawn(async move {
-        poll_health(hc_handle, became_healthy).await;
+        poll_health(hc_handle, became_healthy, hc_config).await;
     });
 }
 
-/// Poll `GET http://127.0.0.1:8008/health` every 200 ms until the first
+/// Poll `GET http://127.0.0.1:<port>/health` (with the launch token) every 200 ms until the first
 /// 200 response (up to 60 s — PyInstaller onefile cold starts can be slow,
 /// especially under antivirus scanning on first run on Windows). Once
 /// healthy, emit `sidecar-ready` and switch to a slow periodic check every
 /// 5 s to detect crashes.
-async fn poll_health(handle: tauri::AppHandle, became_healthy: Arc<AtomicBool>) {
-    let health_url = "http://127.0.0.1:8008/health";
+async fn poll_health(
+    handle: tauri::AppHandle,
+    became_healthy: Arc<AtomicBool>,
+    config: BackendConfig,
+) {
+    let health_url = config.url("/health");
     let start = std::time::Instant::now();
     let timeout = std::time::Duration::from_secs(60);
     let mut ready_emitted = false;
@@ -192,9 +315,11 @@ async fn poll_health(handle: tauri::AppHandle, became_healthy: Arc<AtomicBool>) 
         }
 
         let attempt = {
-            let url = health_url.to_string();
+            let url = health_url.clone();
+            let token = config.token.clone();
             tokio::task::spawn_blocking(move || {
                 ureq::get(&url)
+                    .set(TOKEN_HEADER, &token)
                     .call()
                     .map(|r| r.status())
                     .map_err(|e| e.to_string())
@@ -245,13 +370,21 @@ async fn poll_health(handle: tauri::AppHandle, became_healthy: Arc<AtomicBool>) 
 
 /// Gracefully shut down the sidecar.
 ///
-/// 1. POST http://127.0.0.1:8008/shutdown to ask the FastAPI server
-///    to exit gracefully (works cross-platform, unlike stdin).
+/// 1. POST http://127.0.0.1:<port>/shutdown (token header plus the JSON
+///    body the endpoint requires) to ask the FastAPI server to exit
+///    gracefully (works cross-platform, unlike stdin).
 /// 2. Wait up to 2 seconds for the process to exit on its own.
 /// 3. Force-kill the process if it is still running (fallback).
-fn shutdown_sidecar(sidecar: &SidecarHandle) {
+fn shutdown_sidecar(sidecar: &SidecarHandle, config: &BackendConfig) {
+    // Never stop an API this app did not start (the dev setup's terminal).
+    if sidecar.lock().unwrap().is_none() {
+        return;
+    }
     // Primary: HTTP graceful shutdown
-    let _ = ureq::post("http://127.0.0.1:8008/shutdown").call();
+    let _ = ureq::post(&config.url("/shutdown"))
+        .set(TOKEN_HEADER, &config.token)
+        .set("Content-Type", "application/json")
+        .send_string(r#"{"reason": "app-exit"}"#);
 
     // Give the process up to 2 s to exit cleanly
     std::thread::sleep(std::time::Duration::from_secs(2));
@@ -259,5 +392,49 @@ fn shutdown_sidecar(sidecar: &SidecarHandle) {
     // Fallback: force-kill if still alive
     if let Some(child) = sidecar.lock().unwrap().take() {
         let _ = child.kill();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn no_env(_: &str) -> Option<String> {
+        None
+    }
+
+    #[test]
+    fn debug_builds_use_the_fixed_dev_port_and_token() {
+        let config = BackendConfig::for_build(true, no_env);
+        assert_eq!(config, BackendConfig { port: 8008, token: "psych-cert-dev".into() });
+    }
+
+    #[test]
+    fn debug_builds_accept_env_overrides() {
+        let config = BackendConfig::for_build(true, |key| match key {
+            "PSYCH_CERT_DEV_PORT" => Some("9123".into()),
+            "PSYCH_CERT_DEV_TOKEN" => Some("other".into()),
+            _ => None,
+        });
+        assert_eq!(config, BackendConfig { port: 9123, token: "other".into() });
+    }
+
+    #[test]
+    fn release_builds_ignore_dev_settings_and_stay_random() {
+        let env = |_: &str| Some("9123".to_string());
+        let a = BackendConfig::for_build(false, env);
+        let b = BackendConfig::for_build(false, env);
+        assert_eq!(a.token.len(), 64);
+        assert_ne!(a.token, b.token);
+        assert_ne!(a.token, DEV_TOKEN);
+    }
+
+    #[test]
+    fn csp_is_pinned_to_the_api_port() {
+        let csp = "connect-src 'self' ipc: http://127.0.0.1:*; img-src 'self'";
+        assert_eq!(
+            pin_csp_port(csp, 51234),
+            "connect-src 'self' ipc: http://127.0.0.1:51234; img-src 'self'"
+        );
     }
 }

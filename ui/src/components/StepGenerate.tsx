@@ -33,8 +33,12 @@ import {
   IneligibilityReport,
   type IneligibleResult,
 } from "@/components/generate/IneligibilityReport";
-import { API_BASE, pdfViewUrl } from "@/api/client";
-import type { MatchData } from "@/components/StepMatchReview";
+import { apiFetch, pdfViewUrl } from "@/api/client";
+import {
+  matchNeedsReview,
+  type CERequestSummary,
+  type MatchData,
+} from "@/components/StepMatchReview";
 import type { UploadData } from "@/components/StepUpload";
 
 export type { IneligibleResult, IneligibleStatus } from "@/components/generate/IneligibilityReport";
@@ -119,12 +123,19 @@ function resolveEligibleEntries(
     if (match.kind !== "success") continue;
     if (!match.attendance?.is_eligible) continue;
     if (excluded.has(match.qualtrics_name)) continue;
+    // Partial matches are never generated until someone confirms them.
+    if (matchNeedsReview(match)) continue;
 
-    // Find corresponding CE requests for this Qualtrics name.
-    // A single person may have multiple CE requests (one per CE type).
-    const matchingRequests = matchData.ceRequests.filter(
-      (req) => req.name_on_certificate === match.qualtrics_name,
-    );
+    // Find this person's CE requests (one per CE type). The server lists
+    // them by position so two different people with one name stay apart;
+    // older servers without request_indices fall back to the name.
+    const matchingRequests = match.request_indices
+      ? match.request_indices
+          .map((index) => matchData.ceRequests[index])
+          .filter((req): req is CERequestSummary => req !== undefined)
+      : matchData.ceRequests.filter(
+          (req) => req.name_on_certificate === match.qualtrics_name,
+        );
 
     for (const req of matchingRequests) {
       if (isUnofferedSpecialty(req.ce_type, offered)) continue;
@@ -174,6 +185,12 @@ function deriveIneligibleEntries(
         status: "Ambiguous",
         reason: `Multiple possible Zoom matches: ${(match.candidates ?? []).join(", ")}`,
       });
+    } else if (matchNeedsReview(match)) {
+      results.push({
+        name: match.qualtrics_name,
+        status: "Needs Review",
+        reason: `Partial name match to Zoom "${match.zoom_name ?? ""}" was not confirmed.`,
+      });
     } else if (
       match.kind === "success" &&
       match.attendance &&
@@ -193,6 +210,21 @@ function deriveIneligibleEntries(
 }
 
 // ── Component ───────────────────────────────────────────────────────────────
+
+/** Response header the API uses for preview warnings (a JSON string list). */
+const PREVIEW_WARNINGS_HEADER = "X-Certificate-Warnings";
+
+function parsePreviewWarnings(header: string | null): string[] {
+  if (!header) return [];
+  try {
+    const parsed: unknown = JSON.parse(header);
+    return Array.isArray(parsed)
+      ? parsed.filter((item): item is string => typeof item === "string")
+      : [];
+  } catch {
+    return [];
+  }
+}
 
 export default function StepGenerate({
   onBack,
@@ -223,6 +255,7 @@ export default function StepGenerate({
     null,
   );
   const [previewError, setPreviewError] = useState<string | null>(null);
+  const [previewWarnings, setPreviewWarnings] = useState<string[]>([]);
 
   // ── Generation state ─────────────────────────────────────────────────────
 
@@ -234,6 +267,7 @@ export default function StepGenerate({
   const [certificates, setCertificates] = useState<CertificateResult[]>([]);
   const [ineligible, setIneligible] = useState<IneligibleResult[]>([]);
   const [conversionWarning, setConversionWarning] = useState(false);
+  const [renderWarnings, setRenderWarnings] = useState<string[]>([]);
   const [previewIsPdf, setPreviewIsPdf] = useState(true);
   const [outputDir, setOutputDir] = useState("");
 
@@ -269,7 +303,11 @@ export default function StepGenerate({
     try {
       await openPath(outputDir);
     } catch {
-      setGenError("Could not open the output folder in the file manager.");
+      // The opener is scoped to the home, Downloads, Documents, and Desktop
+      // folders (src-tauri/capabilities/default.json).
+      setGenError(
+        `Could not open the output folder in the file manager. Open it yourself: ${outputDir}`,
+      );
     }
   }, [outputDir]);
 
@@ -281,11 +319,12 @@ export default function StepGenerate({
     setPhase("previewing");
     setPreviewError(null);
     setPreviewPdfBytes(null);
+    setPreviewWarnings([]);
 
     try {
       const first = eligibleEntries[0];
 
-      const response = await fetch(`${API_BASE}/api/preview`, {
+      const response = await apiFetch("/api/preview", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -310,6 +349,9 @@ export default function StepGenerate({
       }
 
       const contentType = response.headers.get("content-type") ?? "";
+      setPreviewWarnings(
+        parsePreviewWarnings(response.headers.get(PREVIEW_WARNINGS_HEADER)),
+      );
       const buffer = await response.arrayBuffer();
       setPreviewIsPdf(contentType.includes("pdf"));
       setPreviewPdfBytes(new Uint8Array(buffer));
@@ -335,7 +377,7 @@ export default function StepGenerate({
     setConversionWarning(false);
 
     try {
-      const response = await fetch(`${API_BASE}/api/generate`, {
+      const response = await apiFetch("/api/generate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -372,6 +414,7 @@ export default function StepGenerate({
         certificates: CertificateResult[];
         ineligible: IneligibleResult[];
         conversion_warning?: boolean;
+        warnings?: string[];
       } = await response.json();
 
       setCertificates(payload.certificates);
@@ -381,6 +424,7 @@ export default function StepGenerate({
           : derivedIneligible,
       );
       setConversionWarning(payload.conversion_warning === true);
+      setRenderWarnings(payload.warnings ?? []);
       setProgressLabel("Generation complete");
       setPhase("complete");
     } catch (err) {
@@ -405,7 +449,7 @@ export default function StepGenerate({
     try {
       const pdfPaths = certificates.map((c) => c.path);
 
-      const response = await fetch(`${API_BASE}/api/download-zip`, {
+      const response = await apiFetch("/api/download-zip", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ pdf_paths: pdfPaths }),
@@ -490,6 +534,19 @@ export default function StepGenerate({
               </Button>
             </div>
 
+            {previewWarnings.length > 0 && (
+              <div
+                role="status"
+                className="rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900"
+              >
+                <p className="font-medium">Check this preview before generating:</p>
+                <ul className="mt-1 list-disc pl-5">
+                  {previewWarnings.map((warning) => (
+                    <li key={warning}>{warning}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
             {previewPdfBytes && previewIsPdf && (
               <div className="rounded-md border bg-muted/20 p-2">
                 <PdfPreview pdfBytes={previewPdfBytes} />
@@ -584,6 +641,21 @@ export default function StepGenerate({
               <div className="rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-700 dark:bg-amber-950/40 dark:text-amber-100">
                 PDF conversion failed. Filled Word (`.docx`) certificates were
                 written instead.
+              </div>
+            )}
+            {renderWarnings.length > 0 && (
+              <div
+                role="alert"
+                className="rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-700 dark:bg-amber-950/40 dark:text-amber-100"
+              >
+                <p className="font-semibold">
+                  Check these certificates before sending:
+                </p>
+                <ul className="mt-1 list-disc pl-5">
+                  {renderWarnings.map((warning) => (
+                    <li key={warning}>{warning}</li>
+                  ))}
+                </ul>
               </div>
             )}
             {/* Certificate table */}

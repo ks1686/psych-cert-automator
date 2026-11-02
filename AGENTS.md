@@ -56,7 +56,7 @@ Tauri v2 (Rust) → React frontend (ui/src/) → HTTP localhost:8008 → FastAPI
 
 - No `as any`, `@ts-ignore`, `@ts-expect-error` in TypeScript
 - No `# type: ignore` or bare `except:` in Python
-- Original Python modules in `src/parser/`, `src/matcher/`, `src/validator/` must not be modified
+- `src/parser/`, `src/matcher/`, and `src/validator/` may be changed, but only together with tests that cover the change (write the failing test first, using synthetic inputs from `tests/synthetic.py`, never real attendee data)
 - Existing Python tests must pass; do not drop coverage to hit a count
 
 ## Learned User Preferences

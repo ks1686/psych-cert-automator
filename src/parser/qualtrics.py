@@ -9,7 +9,8 @@ type columns.
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
+from datetime import datetime
 from enum import StrEnum, auto, unique
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -17,10 +18,9 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
-from openpyxl import load_workbook
-
 from src.models.certificate import CERequest
 from src.models.training import CEType
+from src.parser.tabular import read_rows
 
 # ── Column detection constants ─────────────────────────────────────────────
 
@@ -31,6 +31,8 @@ _LICENSE_KW: tuple[str, ...] = (
 )
 _NAME_KW: tuple[str, ...] = ("name (as you would like", "name on certificate")
 _EMAIL_KW: tuple[str, ...] = ("preferred email",)
+_SUBMITTED_HEADERS: tuple[str, ...] = ("recorded date", "recordeddate", "end date", "enddate")
+"""Submission-time columns, best first (Recorded Date, then End Date)."""
 _LICENSE_PROMPT_RE: re.Pattern[str] = re.compile(
     r"\([^)]*(?:license|certificate|enter|#)[^)]*\)", re.IGNORECASE,
 )
@@ -119,6 +121,8 @@ class _ColumnLayout:
     license_cols: dict[str, int]
     # In checkbox format: list of (ce_type_name, column_index).
     ce_checkbox_cols: list[tuple[str, int]]
+    # Submission time column (Recorded Date or End Date), if present.
+    submitted_col: int | None = None
 
 
 def _detect_columns(headers: list[str]) -> _ColumnLayout:
@@ -161,7 +165,17 @@ def _detect_columns(headers: list[str]) -> _ColumnLayout:
         main_ce_col=main_ce_col,
         license_cols=license_cols,
         ce_checkbox_cols=ce_checkbox_cols,
+        submitted_col=_find_exact(headers, _SUBMITTED_HEADERS),
     )
+
+
+def _find_exact(headers: list[str], names: tuple[str, ...]) -> int | None:
+    """Return the first column whose whole header equals one of *names*."""
+    lowered = [(raw or "").strip().lower() for raw in headers]
+    for name in names:
+        if name in lowered:
+            return lowered.index(name)
+    return None
 
 
 def _scan_ce_column(
@@ -205,6 +219,19 @@ def _cell_str(value: object) -> str | None:
     return str(value).strip() or None
 
 
+def _cell_datetime(value: object) -> datetime | None:
+    """Read a submission time from a datetime cell or an ISO-like string."""
+    if isinstance(value, datetime):
+        return value
+    text = _cell_str(value)
+    if text is None:
+        return None
+    try:
+        return datetime.fromisoformat(text)
+    except ValueError:
+        return None
+
+
 def _split_ce_types(raw: str) -> list[str]:
     """Split comma-separated CE type selection into individual types."""
     return [t.strip() for t in raw.split(",") if t.strip()]
@@ -223,14 +250,21 @@ def _parse_row(
         return
 
     email = _cell_str(row_values[layout.email_col])
+    submitted_at = (
+        _cell_datetime(row_values[layout.submitted_col])
+        if layout.submitted_col is not None and layout.submitted_col < len(row_values)
+        else None
+    )
 
     match layout:
         case _ColumnLayout(main_ce_col=int(ce_col)) if ce_col >= 0:
             raw_ce = _cell_str(row_values[ce_col])
             if raw_ce:
-                yield from _from_selection(name, email, raw_ce, layout, row_values)
+                for request in _from_selection(name, email, raw_ce, layout, row_values):
+                    yield replace(request, submitted_at=submitted_at)
         case _ColumnLayout(ce_checkbox_cols=cols) if cols:
-            yield from _from_checkboxes(name, email, row_values, cols, layout)
+            for request in _from_checkboxes(name, email, row_values, cols, layout):
+                yield replace(request, submitted_at=submitted_at)
         case _:
             return
 
@@ -300,7 +334,8 @@ def parse_qualtrics_export(filepath: str) -> list[CERequest]:
     ``CERequest`` entries, one per CE type per person.
 
     Args:
-        filepath: Path to a ``.xlsx`` file exported from Qualtrics.
+        filepath: Path to a ``.xlsx`` or ``.csv`` file exported from Qualtrics
+            (one label row, or the three header rows of the API/CSV export).
 
     Returns:
         One ``CERequest`` per person per CE type.
@@ -314,24 +349,52 @@ def parse_qualtrics_export(filepath: str) -> list[CERequest]:
         msg = f"Qualtrics export not found: {filepath}"
         raise FileNotFoundError(msg)
 
-    wb = load_workbook(path, read_only=True, data_only=True)
-    try:
-        ws = wb.active
-        if ws is None:
-            msg = f"No active worksheet in {filepath}"
-            raise ValueError(msg)
+    rows = read_rows(filepath)
+    header_idx = _find_header_row(rows)
+    if header_idx is None:
+        msg = f"Missing name column (keywords: {_NAME_KW})"
+        raise ValueError(msg)
+    headers = [str(cell) if cell is not None else "" for cell in rows[header_idx]]
+    layout = _detect_columns(headers)
+    finished_col = _find_exact(headers, ("finished",))
 
-        headers: list[str] = [
-            str(cell.value) if cell.value is not None else ""
-            for cell in next(ws.iter_rows(min_row=1, max_row=1))
-        ]
-        layout = _detect_columns(headers)
+    requests: list[CERequest] = []
+    for row in rows[header_idx + 1 :]:
+        row_values: list[object] = list(row)
+        if len(row_values) < len(headers):
+            row_values.extend([None] * (len(headers) - len(row_values)))
+        if _is_import_id_row(row_values) or _is_unfinished(row_values, finished_col):
+            continue
+        requests.extend(_parse_row(row_values, layout))
 
-        requests: list[CERequest] = []
-        for row in ws.iter_rows(min_row=2, values_only=True):
-            row_values: list[object] = list(row)
-            requests.extend(_parse_row(row_values, layout))
+    return requests
 
-        return requests
-    finally:
-        wb.close()
+
+_HEADER_SCAN_ROWS = 10
+
+
+def _find_header_row(rows: list[tuple[object, ...]]) -> int | None:
+    """Return the row with the question labels.
+
+    Qualtrics API/CSV exports put short codes (Q1, Q2...) in row 1, the
+    question labels in row 2, and ``{"ImportId": ...}`` JSON in row 3, so
+    the header is located by keyword rather than assumed to be row 1.
+    """
+    for i, row in enumerate(rows[:_HEADER_SCAN_ROWS]):
+        if any(_contains(str(cell or ""), _NAME_KW) for cell in row):
+            return i
+    return None
+
+
+def _is_import_id_row(row_values: list[object]) -> bool:
+    return any(str(cell or "").lstrip().startswith('{"ImportId"') for cell in row_values)
+
+
+def _is_unfinished(row_values: list[object], finished_col: int | None) -> bool:
+    """True for partial responses (Qualtrics Finished = False / 0)."""
+    if finished_col is None:
+        return False
+    value = row_values[finished_col]
+    if isinstance(value, bool):
+        return not value
+    return str(value).strip().lower() in {"false", "0", "0.0"} if value is not None else False

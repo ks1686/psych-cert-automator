@@ -7,11 +7,10 @@ participant name, and returns one ``ParticipantAttendance`` per unique person.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+import re
+from dataclasses import dataclass, replace
 from datetime import datetime
-from typing import override
-
-import openpyxl
+from typing import TYPE_CHECKING, override
 
 from src.models.participant import (
     AttendanceRecord,
@@ -19,6 +18,10 @@ from src.models.participant import (
     ParticipantDataError,
     normalize_name,
 )
+from src.parser.tabular import UnreadableFileError, read_rows
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 
 @dataclass(frozen=True, slots=True)
@@ -35,6 +38,8 @@ class ZoomSession:
     session_start: datetime
     session_end: datetime
     participants: tuple[ParticipantAttendance, ...]
+    host: str | None = None
+    """Meeting host display name (email parenthetical removed), if listed."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -55,94 +60,245 @@ class ZoomParseError(Exception):
 
 
 def parse_zoom_attendance(filepath: str) -> ZoomSession:
-    """Parse a Zoom attendance .xlsx report into typed participant data.
+    """Parse a Zoom attendance report (.xlsx or .csv) into typed participant data.
 
-    Opens the workbook, extracts session start/end times from the metadata
-    rows, reads per-segment participant records, filters out waiting-room
-    segments, groups records by normalized participant name, and returns
-    aggregated ``ParticipantAttendance`` objects.
+    The participant header row is found by keyword ("Join time"), so an extra
+    title row above the report, or the Zoom web CSV layout, still parses.
+    Meeting start/end (and host, when present) come from the metadata block
+    above it. Waiting-room segments are dropped, records are grouped by
+    normalized name and, when people share a name, by email.
 
     Args:
-        filepath: Path to the Zoom-generated ``.xlsx`` attendance report.
+        filepath: Path to the Zoom attendance report.
 
     Returns:
         A ``ZoomSession`` containing session times and one
         ``ParticipantAttendance`` per unique person.
 
     Raises:
-        ZoomParseError: If the file is missing, not a valid .xlsx, or
-            contains unparseable data.
+        ZoomParseError: If the file is missing, unreadable, or contains
+            unparseable data.
     """
-    workbook = _open_workbook(filepath)
+    try:
+        rows = read_rows(filepath)
+    except FileNotFoundError:
+        raise ZoomParseError(filepath=filepath, reason="file not found") from None
+    except UnreadableFileError as exc:
+        raise ZoomParseError(filepath=filepath, reason=str(exc)) from exc
 
-    ws = workbook.active
-    if ws is None:
-        raise ZoomParseError(filepath=filepath, reason="workbook has no active sheet")
+    header_idx = _find_header_row(rows)
+    if header_idx is None:
+        raise ZoomParseError(
+            filepath=filepath,
+            reason="could not find the participant header row (with a 'Join time' column)",
+        )
+    columns = _participant_columns(rows[header_idx])
+    if columns is None:
+        raise ZoomParseError(
+            filepath=filepath,
+            reason="participant header row needs Name, Join time, and Leave time columns",
+        )
+    session_start, session_end, host, host_email = _session_metadata(
+        rows[:header_idx], filepath,
+    )
 
-    raw_start: object = ws["E2"].value  # pyright: ignore[reportAny]  # openpyxl stubs
-    raw_end: object = ws["F2"].value  # pyright: ignore[reportAny]  # openpyxl stubs
-    session_start = _parse_datetime_cell(raw_start, "session_start", filepath)
-    session_end = _parse_datetime_cell(raw_end, "session_end", filepath)
+    raw_records = [
+        _parse_attendance_row(_pick(row, columns), filepath)
+        for row in rows[header_idx + 1 :]
+        if row and _cell(row, columns[0]) is not None
+    ]
 
-    raw_records: list[AttendanceRecord] = []
-    for row in ws.iter_rows(min_row=5, values_only=True):
-        if row[0] is None:
-            continue
-        raw_records.append(_parse_attendance_row(row, filepath))
-
-    workbook.close()
-
-    # Filter out waiting-room segments, then group by normalized name.
+    # Filter out waiting-room segments, then group by person.
     active = [r for r in raw_records if not r.is_waiting_room]
 
-    by_name: dict[str, list[AttendanceRecord]] = {}
-    for record in active:
-        key = normalize_name(record.name_raw)
-        if key in by_name:
-            by_name[key].append(record)
-        else:
-            by_name[key] = [record]
-
     participants: list[ParticipantAttendance] = []
-    for group in by_name.values():
+    for label, group in _group_people(active):
         try:
-            participants.append(ParticipantAttendance.from_records(group))
+            person = ParticipantAttendance.from_records(group)
         except ParticipantDataError:
             # Should not happen after filtering, but skip gracefully.
             continue
+        participants.append(replace(person, name_raw=label))
 
     participants.sort(key=lambda p: p.first_join)
+
+    if host is None and host_email:
+        host = _host_by_email(active, host_email)
 
     return ZoomSession(
         session_start=session_start,
         session_end=session_end,
         participants=tuple(participants),
+        host=host,
     )
 
 
 # ── Internal helpers ──────────────────────────────────────────────────────────
 
+_ColumnMap = tuple[int, int | None, int, int, int | None, int | None, int | None]
+"""Indices of name, email, join, leave, duration, guest, waiting room."""
 
-def _open_workbook(filepath: str) -> openpyxl.Workbook:
-    """Open an .xlsx workbook with error handling.
+_HEADER_SCAN_ROWS = 20
+_EMAIL_IN_PARENS = re.compile(r"\s*\([^)]*@[^)]*\)\s*$")
+_DATETIME_FORMATS = (
+    "%m/%d/%Y %I:%M:%S %p",
+    "%m/%d/%Y %I:%M %p",
+    "%m/%d/%Y %H:%M:%S",
+    "%m/%d/%Y %H:%M",
+    "%Y-%m-%d %H:%M:%S",
+    "%Y-%m-%d %H:%M",
+)
 
-    Args:
-        filepath: Path to the .xlsx file.
 
-    Returns:
-        An open ``openpyxl.Workbook``. The caller is responsible for closing it.
+def _text(value: object) -> str:
+    return str(value).strip().lower() if value is not None else ""
 
-    Raises:
-        ZoomParseError: If the file is missing or not a valid .xlsx.
+
+def _cell(row: tuple[object, ...], idx: int | None) -> object:
+    if idx is None or idx >= len(row):
+        return None
+    return row[idx]
+
+
+def _find_header_row(rows: list[tuple[object, ...]]) -> int | None:
+    for i, row in enumerate(rows[:_HEADER_SCAN_ROWS]):
+        if any(_text(cell).startswith("join time") for cell in row):
+            return i
+    return None
+
+
+def _participant_columns(header: tuple[object, ...]) -> _ColumnMap | None:
+    labels = [_text(cell) for cell in header]
+
+    def find(test: Callable[[str], bool]) -> int | None:
+        return next((i for i, label in enumerate(labels) if test(label)), None)
+
+    name = find(lambda t: t.startswith("name"))
+    join = find(lambda t: t.startswith("join time"))
+    leave = find(lambda t: t.startswith("leave time"))
+    if name is None or join is None or leave is None:
+        return None
+    return (
+        name,
+        find(lambda t: "email" in t),
+        join,
+        leave,
+        find(lambda t: t.startswith("duration")),
+        find(lambda t: t == "guest"),
+        find(lambda t: "waiting room" in t),
+    )
+
+
+def _pick(row: tuple[object, ...], columns: _ColumnMap) -> tuple[object, ...]:
+    """Reorder a data row into the canonical 7-column layout."""
+    name, email, join, leave, duration, guest, waiting = columns
+    return (
+        _cell(row, name),
+        _cell(row, email),
+        _cell(row, join),
+        _cell(row, leave),
+        _cell(row, duration),
+        _cell(row, guest) if guest is not None else "No",
+        _cell(row, waiting) if waiting is not None else "No",
+    )
+
+
+def _host_by_email(records: list[AttendanceRecord], host_email: str) -> str | None:
+    """Display name of the attendee whose email is the host's, if any."""
+    wanted = host_email.strip().casefold()
+    for record in records:
+        if (record.email or "").strip().casefold() == wanted:
+            return _EMAIL_IN_PARENS.sub("", record.name_raw).strip() or record.name_raw
+    return None
+
+
+def _session_metadata(
+    rows: list[tuple[object, ...]],
+    filepath: str,
+) -> tuple[datetime, datetime, str | None, str | None]:
+    """Find meeting start, end, host, and host email above the participants.
+
+    The desktop/usage report has a "Host" column. The Zoom web portal CSV has
+    no host name, only "User Email", which is assumed to be the host's
+    account email; the caller turns it into a name using the attendee list.
     """
-    try:
-        return openpyxl.load_workbook(filepath, read_only=True, data_only=True)
-    except FileNotFoundError:
-        raise ZoomParseError(filepath=filepath, reason="file not found") from None
-    except KeyError as exc:
-        raise ZoomParseError(
-            filepath=filepath, reason=f"unexpected workbook structure: {exc}"
-        ) from exc
+    for i, row in enumerate(rows[:-1]):
+        labels = [_text(cell) for cell in row]
+        if "start time" in labels and "end time" in labels:
+            values = rows[i + 1]
+            start = _parse_datetime_cell(
+                _cell(values, labels.index("start time")), "session_start", filepath,
+            )
+            end = _parse_datetime_cell(
+                _cell(values, labels.index("end time")), "session_end", filepath,
+            )
+            host_idx = next(
+                (j for j, label in enumerate(labels) if label in {"host", "host name"}),
+                None,
+            )
+            host_raw = _cell(values, host_idx)
+            host = None
+            if isinstance(host_raw, str) and host_raw.strip():
+                host = _EMAIL_IN_PARENS.sub("", host_raw).strip() or host_raw.strip()
+            email_idx = next(
+                (j for j, label in enumerate(labels) if label in {"user email", "host email"}),
+                None,
+            )
+            email_raw = _cell(values, email_idx)
+            has_email = isinstance(email_raw, str) and "@" in email_raw
+            host_email = email_raw.strip() if has_email else None
+            return start, end, host, host_email
+    raise ZoomParseError(
+        filepath=filepath,
+        reason="could not find the meeting Start time / End time above the participant list",
+    )
+
+
+def _group_people(
+    records: list[AttendanceRecord],
+) -> list[tuple[str, list[AttendanceRecord]]]:
+    """Group segments by normalized name, then split a name by distinct emails.
+
+    Segments without an email join the only emailed group for that name;
+    if two or more people share the name, they stay in their own group.
+    Groups that share a display name are labelled ``"Name (email)"`` so each
+    label is unique (the parenthetical is ignored by name matching).
+    """
+    by_name: dict[str, list[AttendanceRecord]] = {}
+    for record in records:
+        by_name.setdefault(normalize_name(record.name_raw), []).append(record)
+
+    groups: list[list[AttendanceRecord]] = []
+    for same_name in by_name.values():
+        by_email: dict[str, list[AttendanceRecord]] = {}
+        no_email: list[AttendanceRecord] = []
+        for record in same_name:
+            key = (record.email or "").strip().casefold()
+            if key:
+                by_email.setdefault(key, []).append(record)
+            else:
+                no_email.append(record)
+        if len(by_email) <= 1:
+            groups.append(same_name)
+            continue
+        groups.extend(by_email.values())
+        if no_email:
+            groups.append(no_email)
+
+    first_label: dict[str, int] = {}
+    for group in groups:
+        name = group[0].name_raw
+        first_label[name] = first_label.get(name, 0) + 1
+
+    labelled: list[tuple[str, list[AttendanceRecord]]] = []
+    for group in groups:
+        name = group[0].name_raw
+        email = next((r.email.strip() for r in group if r.email and r.email.strip()), None)
+        if first_label[name] > 1 and email:
+            labelled.append((f"{name} ({email})", group))
+        else:
+            labelled.append((name, group))
+    return labelled
 
 
 def _parse_datetime_cell(
@@ -165,6 +321,17 @@ def _parse_datetime_cell(
     """
     if isinstance(value, datetime):
         return value
+    if isinstance(value, str):
+        text = value.strip()
+        for fmt in _DATETIME_FORMATS:
+            try:
+                return datetime.strptime(text, fmt)  # noqa: DTZ007  # Zoom exports local time
+            except ValueError:
+                continue
+        try:
+            return datetime.fromisoformat(text)
+        except ValueError:
+            pass
     raise ZoomParseError(
         filepath=filepath,
         reason=f"expected datetime for {label}, got {type(value).__name__}: {value!r}",
@@ -239,7 +406,9 @@ def _parse_email_cell(value: object) -> str | None:
     Returns:
         The email string, or ``None`` if the cell was empty or non-string.
     """
-    return value if isinstance(value, str) else None
+    if isinstance(value, str) and value.strip():
+        return value.strip()
+    return None
 
 
 def _parse_duration_cell(
@@ -260,6 +429,8 @@ def _parse_duration_cell(
     Raises:
         ZoomParseError: If the value is not a non-negative number.
     """
+    if isinstance(value, str) and value.strip().replace(".", "", 1).isdigit():
+        value = float(value.strip())
     match value:
         case int() | float():
             if value >= 0:
@@ -298,10 +469,12 @@ def _parse_yes_no(
     Raises:
         ZoomParseError: If the value is not ``"Yes"`` or ``"No"``.
     """
+    if isinstance(value, str):
+        value = value.strip().capitalize()
     match value:
         case "Yes":
             return True
-        case "No":
+        case "No" | None:
             return False
         case _:
             raise ZoomParseError(

@@ -10,11 +10,9 @@
       "identifier": "opener:allow-open-path",
       "allow": [
         { "path": "$HOME/**" },
-        { "path": "$HOME/.*" },
-        { "path": "$HOME/.*/**" },
-        { "path": "/**" },
-        { "path": "/**/.*" },
-        { "path": "/**/.*/**" }
+        { "path": "$DOWNLOAD/**" },
+        { "path": "$DOCUMENT/**" },
+        { "path": "$DESKTOP/**" }
       ]
     },
     {

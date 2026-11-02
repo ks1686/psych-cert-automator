@@ -32,9 +32,7 @@ def test_ce_types_filter_rejects_unoffered_apa(tmp_path: Path) -> None:
     ]
     assert rejected
     assert all("not offered" in entry.reason.lower() for entry in rejected)
-    assert all(
-        str(cert.ce_type).upper().find("APA") == -1 for cert in result.eligible
-    )
+    assert all(str(cert.ce_type).upper().find("APA") == -1 for cert in result.eligible)
 
 
 def test_unknown_qualtrics_type_still_gets_attendance(tmp_path: Path) -> None:
