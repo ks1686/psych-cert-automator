@@ -699,6 +699,7 @@ export default function StepGenerate({
                                 href={pdfViewUrl(cert.path)}
                                 target="_blank"
                                 rel="noopener noreferrer"
+                                download
                               >
                                 <Eye className="mr-1 h-3 w-3" />
                                 View
