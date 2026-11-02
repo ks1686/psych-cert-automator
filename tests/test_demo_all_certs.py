@@ -7,7 +7,7 @@ from tests.synthetic import write_zoom, write_qualtrics
 
 
 def _dt(year: int, month: int, day: int, hour: int, minute: int) -> datetime:
-    return datetime(year, month, day, hour, minute)
+    return datetime(year, month, day, hour, minute)  # noqa: DTZ001
 
 
 def test_all_five_certificate_types_generate(tmp_path: Path) -> None:
