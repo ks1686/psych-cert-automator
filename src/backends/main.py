@@ -135,17 +135,12 @@ class _ShutdownRequest(BaseModel):
 
 
 @app.post("/shutdown")
-async def shutdown(request: Request, _request: _ShutdownRequest) -> dict[str, str]:
+async def shutdown(_request: _ShutdownRequest) -> dict[str, str]:
     """Trigger graceful shutdown via SIGINT.
 
-    Requires an ``application/json`` body. FastAPI already refuses to build
-    the body model without a JSON content type; this explicit check keeps
-    that protection even if body parsing changes, so a random web page cannot
-    shut the tokenless development backend down with a headerless POST.
+    Requires a JSON body: browsers cannot send application/json cross-origin
+    without a CORS preflight, so a random web page cannot shut the backend down.
     """
-    content_type = request.headers.get("content-type", "").split(";", 1)[0].strip().lower()
-    if content_type != "application/json":
-        raise HTTPException(status_code=415, detail="Content-Type must be application/json")
     os.kill(os.getpid(), signal.SIGINT)
     return {"status": "shutting_down"}
 
