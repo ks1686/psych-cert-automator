@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import zipfile
 from typing import TYPE_CHECKING
 
@@ -69,3 +70,16 @@ def test_parse_returns_400_for_a_truncated_zoom_file(
     with pytest.raises(HTTPException) as caught:
         asyncio.run(parse_endpoint(request))
     assert caught.value.status_code == 400
+
+
+@pytest.mark.skipif(os.name != "posix", reason="chmod cannot make a file unreadable on Windows")
+def test_unopenable_csv_is_an_unreadable_file(tmp_path: Path) -> None:
+    """A CSV that exists but cannot be opened must not escape as an OSError."""
+    locked = tmp_path / "locked.csv"
+    locked.write_text("a,b\n1,2\n", encoding="utf-8")
+    locked.chmod(0o000)
+    try:
+        with pytest.raises(UnreadableFileError):
+            read_rows(str(locked))
+    finally:
+        locked.chmod(0o644)

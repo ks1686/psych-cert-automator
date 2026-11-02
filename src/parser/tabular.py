@@ -90,5 +90,11 @@ def _read_csv(path: Path) -> list[Row]:
                 ]
         except UnicodeDecodeError:
             continue
+        except OSError as exc:
+            # Permission denied, a sharing lock, or a device error: the file
+            # exists but this run cannot read it. Callers promise a clear
+            # "could not read" message, never a 500.
+            msg = f"Could not read {path.name}: the file could not be opened."
+            raise UnreadableFileError(msg) from exc
     msg = f"Could not read {path.name}: the CSV is not UTF-8 or Windows-1252 text."
     raise UnreadableFileError(msg)

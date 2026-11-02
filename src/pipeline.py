@@ -71,6 +71,39 @@ class PipelineResult:
     """Certificates that were generated but should be checked by a person."""
 
 
+_Identity = tuple[str, str, str, frozenset[str]]
+"""Precomputed (CE type, email key, normalized name, name tokens) for one request."""
+
+
+def _identity(request: CERequest) -> _Identity:
+    """Return the comparison keys for one request, normalized once."""
+    email = (request.email or "").strip().casefold()
+    name = normalize_name(request.name_on_certificate)
+    tokens = extract_name_tokens(name) if name else frozenset()
+    return str(request.ce_type), email, name, frozenset(tokens)
+
+
+def _same_identity(older: _Identity, newer: _Identity) -> bool:
+    """True when two precomputed identities are the same person and CE type.
+
+    Emails must not conflict; a shared email alone (a family address) never
+    makes two different names one person.
+    """
+    old_type, old_email, old_name, old_tokens = older
+    new_type, new_email, new_name, new_tokens = newer
+    if old_type != new_type:
+        return False
+    if old_email and new_email and old_email != new_email:
+        return False
+    if not old_name or not new_name:
+        return False
+    if old_name == new_name:
+        return True
+    if not (old_email and new_email):
+        return False
+    return old_tokens <= new_tokens or new_tokens <= old_tokens
+
+
 def _same_person_and_type(older: CERequest, newer: CERequest) -> bool:
     """True when two requests are the same person asking for the same CE type.
 
@@ -80,23 +113,7 @@ def _same_person_and_type(older: CERequest, newer: CERequest) -> bool:
     when both rows carry the same email. A shared email alone (a family
     address) never makes two different names one person.
     """
-    if str(older.ce_type) != str(newer.ce_type):
-        return False
-    old_email = (older.email or "").strip().casefold()
-    new_email = (newer.email or "").strip().casefold()
-    if old_email and new_email and old_email != new_email:
-        return False
-    old_name = normalize_name(older.name_on_certificate)
-    new_name = normalize_name(newer.name_on_certificate)
-    if not old_name or not new_name:
-        return False
-    if old_name == new_name:
-        return True
-    if not (old_email and new_email):
-        return False
-    old_tokens = extract_name_tokens(old_name)
-    new_tokens = extract_name_tokens(new_name)
-    return old_tokens <= new_tokens or new_tokens <= old_tokens
+    return _same_identity(_identity(older), _identity(newer))
 
 
 def _submitted_sort_key(request: CERequest) -> float:
@@ -104,32 +121,80 @@ def _submitted_sort_key(request: CERequest) -> float:
     return request.submitted_at.timestamp() if request.submitted_at else 0.0
 
 
+def _latest_order(request: CERequest, index: int) -> tuple[bool, float, int]:
+    """Order key where the greatest value is the submission to keep."""
+    return request.submitted_at is not None, _submitted_sort_key(request), index
+
+
+class _DisjointSets:
+    """Union-find that refuses to merge groups with conflicting emails."""
+
+    def __init__(self, size: int) -> None:
+        self.parent = list(range(size))
+        self.email: dict[int, str] = {}
+
+    def find(self, index: int) -> int:
+        """Root of ``index``, compressing the path on the way up."""
+        while self.parent[index] != index:
+            self.parent[index] = self.parent[self.parent[index]]
+            index = self.parent[index]
+        return index
+
+    def union(self, left: int, right: int) -> None:
+        """Merge two groups unless their non-empty emails disagree."""
+        left_root, right_root = self.find(left), self.find(right)
+        if left_root == right_root:
+            return
+        left_email = self.email.get(left_root)
+        right_email = self.email.get(right_root)
+        if left_email and right_email and left_email != right_email:
+            return  # conflicting identities: never merge across emails
+        self.parent[right_root] = left_root
+        if left_email or right_email:
+            self.email[left_root] = left_email or right_email
+        self.email.pop(right_root, None)
+
+    def groups(self) -> list[list[int]]:
+        """Every group of member indices, in first-seen order."""
+        grouped: dict[int, list[int]] = {}
+        for index in range(len(self.parent)):
+            grouped.setdefault(self.find(index), []).append(index)
+        return list(grouped.values())
+
+
+def _group_duplicates(identities: list[_Identity]) -> list[list[int]]:
+    """Group request indices that describe the same person and CE type.
+
+    Links are transitive, so a renamed row connects the rows around it. A
+    group is never merged across conflicting non-empty emails, which keeps
+    two respondents who share a name separate.
+    """
+    sets = _DisjointSets(len(identities))
+    for i in range(len(identities)):
+        for j in range(i + 1, len(identities)):
+            if _same_identity(identities[i], identities[j]):
+                sets.union(i, j)
+    return sets.groups()
+
+
 def split_duplicates(
     requests: list[CERequest],
 ) -> tuple[list[CERequest], list[CERequest]]:
     """Split survey rows into the ones to use and older duplicates.
 
-    Two requests are duplicates when ``_same_person_and_type`` says so.
-    "Latest" is the most recent ``submitted_at``; requests without a time
-    count as older than timed ones, and ties keep the later row. Both lists
-    keep the original row order.
+    Two requests belong together when ``_same_person_and_type`` links them,
+    directly or through a renamed row. A group is never formed across
+    conflicting non-empty emails, so two respondents who share a name stay
+    separate. The kept row is the latest one in each group; every other row
+    is reported as a duplicate. Both lists keep the original row order.
     """
-    order = sorted(
-        range(len(requests)),
-        key=lambda i: (
-            requests[i].submitted_at is not None,
-            _submitted_sort_key(requests[i]),
-            i,
-        ),
-    )
+    groups = _group_duplicates([_identity(request) for request in requests])
     kept: list[int] = []
     dropped: list[int] = []
-    for i in order:
-        older = [j for j in kept if _same_person_and_type(requests[j], requests[i])]
-        for j in older:
-            kept.remove(j)
-            dropped.append(j)
-        kept.append(i)
+    for members in groups:
+        latest = max(members, key=lambda i: _latest_order(requests[i], i))
+        kept.append(latest)
+        dropped.extend(i for i in members if i != latest)
     if dropped:
         logger.info("Ignored %d duplicate survey submission(s).", len(dropped))
     return [requests[i] for i in sorted(kept)], [requests[i] for i in sorted(dropped)]
@@ -579,9 +644,7 @@ def _make_ineligible(  # noqa: PLR0913
 
 
 def _duplicate_entry(request: CERequest) -> IneligibilityEntry:
-    when = (
-        f" (submitted {request.submitted_at:%Y-%m-%d %H:%M})" if request.submitted_at else ""
-    )
+    when = f" (submitted {request.submitted_at:%Y-%m-%d %H:%M})" if request.submitted_at else ""
     return _make_ineligible(
         request,
         name_zoom=None,

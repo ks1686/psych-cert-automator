@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
-from datetime import date, time
+from datetime import UTC, date, datetime, time
 from typing import TYPE_CHECKING
 
 from src import pipeline
-from src.models.certificate import EligibilityStatus
+from src.models.certificate import CERequest, EligibilityStatus
+from src.models.training import CEType
 from src.parser.qualtrics import parse_qualtrics_export
-from src.pipeline import dedupe_requests, run_pipeline
+from src.pipeline import dedupe_requests, run_pipeline, split_duplicates
 
 from tests.synthetic import at, seg, write_qualtrics, write_zoom
 
@@ -95,3 +96,43 @@ def test_pipeline_generates_one_certificate_per_person_and_type(
         ("Ann Lee", NY, "LATEST-111"),
         ("Bo Diaz", APA, None),
     ]
+
+
+def _req(name: str, email: str | None, hour: int) -> CERequest:
+    return CERequest(
+        name_on_certificate=name,
+        email=email,
+        ce_type=CEType(APA),
+        license_number=None,
+        submitted_at=datetime(2026, 11, 2, hour, 0, tzinfo=UTC),
+    )
+
+
+def test_alias_chain_collapses_to_one_request() -> None:
+    """A replaced alias must not leave a second request behind.
+
+    An older name variant is dropped in favour of a newer one, and the
+    person later submits again without an email. The survivor has to keep
+    the dropped row's alias, or the third submission is treated as a
+    different person and produces a second certificate.
+    """
+    requests = [
+        _req("Ann Lee", "ann@example.test", 13),
+        _req("Ann M. Lee", "ann@example.test", 14),
+        _req("Ann Lee", None, 15),
+    ]
+    kept, dropped = split_duplicates(requests)
+    assert [r.name_on_certificate for r in kept] == ["Ann Lee"]
+    assert kept[0].submitted_at == datetime(2026, 11, 2, 15, 0, tzinfo=UTC)
+    assert len(dropped) == 2
+
+
+def test_same_name_with_conflicting_emails_stays_separate() -> None:
+    """Two respondents who share a name but not an email are two people."""
+    requests = [
+        _req("Chris Park", "chris.p1@example.test", 13),
+        _req("CHRIS PARK", "chris.p2@example.test", 14),
+    ]
+    kept, dropped = split_duplicates(requests)
+    assert len(kept) == 2
+    assert dropped == []

@@ -149,3 +149,19 @@ def test_port_comes_from_the_environment(monkeypatch: pytest.MonkeyPatch) -> Non
 def test_ui_can_read_the_preview_warnings_header() -> None:
     cors = next(m for m in main.app.user_middleware if "CORS" in str(m.cls))
     assert "X-Certificate-Warnings" in cors.kwargs["expose_headers"]
+
+
+def test_shutdown_rejects_json_sent_without_a_content_type(token: str, no_kill: list[int]) -> None:
+    """A cross-site page cannot shut the backend down with a headerless POST.
+
+    Browsers can send a JSON body without a JSON content type; FastAPI must
+    not parse it into the shutdown model.
+    """
+    status, _ = _call(
+        "POST",
+        "/shutdown",
+        headers={"X-Psych-Cert-Token": token},
+        body=b'{"reason": "attack"}',
+    )
+    assert status == 422
+    assert no_kill == []
