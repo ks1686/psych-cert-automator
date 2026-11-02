@@ -5,15 +5,9 @@ from pathlib import Path
 from src.pipeline import run_pipeline
 from tests.synthetic import write_zoom, write_qualtrics
 
-# All times are naive UTC for test reproducibility; DTZ001 is intentional.
-_TZ_NONE = None  # type: ignore[assignment]
-
 
 def _dt(year: int, month: int, day: int, hour: int, minute: int) -> datetime:
-    return datetime(year, month, day, hour, minute, tzinfo=_TZ_NONE)  # noqa: DTZ001
-
-
-_ZOOM_TUPLE_LEN = 3  # (join, leave, waiting_room) after name/email
+    return datetime(year, month, day, hour, minute)
 
 
 def test_all_five_certificate_types_generate(tmp_path: Path) -> None:
