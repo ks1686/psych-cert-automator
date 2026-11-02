@@ -109,7 +109,9 @@ jobs:
 
       - name: Run pytest
         if: github.event_name != 'pull_request'
-        timeout-minutes: 5
+        # The suite needs ~5-6 min on hosted runners (certificate-layout
+        # rendering dominates); a 5-minute cap made this step flaky.
+        timeout-minutes: 15
         run: uv run pytest
 
       # ── Python sidecar ──────────────────────────────────────────
