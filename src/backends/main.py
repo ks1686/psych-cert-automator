@@ -14,7 +14,7 @@ import secrets
 import signal
 import sys
 import threading
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 # Force line-buffered stdout/stderr. Python defaults to full block-buffering
@@ -146,6 +146,23 @@ async def shutdown(_request: _ShutdownRequest) -> dict[str, str]:
 
 
 SESSIONS_DIR = Path.home() / ".psych-cert-gen" / "sessions"
+SESSION_EXPIRATION_DAYS = 30
+
+
+def _prune_sessions() -> int:
+    """Remove session files older than ``SESSION_EXPIRATION_DAYS``.
+
+    Returns the number of files deleted.
+    """
+    if not SESSIONS_DIR.exists():
+        return 0
+    cutoff = datetime.now(tz=UTC) - timedelta(days=SESSION_EXPIRATION_DAYS)
+    pruned = 0
+    for f in SESSIONS_DIR.glob("*.json"):
+        if datetime.fromtimestamp(f.stat().st_mtime, tz=UTC) < cutoff:
+            f.unlink()
+            pruned += 1
+    return pruned
 
 
 class _SessionRequest(BaseModel):
@@ -173,6 +190,7 @@ def _slugify(text: str) -> str:
 @app.get("/api/sessions")
 async def list_sessions() -> list[dict[str, str | int | bool | None]]:
     """Return metadata for every saved session file."""
+    _prune_sessions()
     sessions: list[dict[str, str | int | bool | None]] = []
     if not SESSIONS_DIR.exists():
         return sessions

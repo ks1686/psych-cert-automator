@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import os
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -80,3 +82,69 @@ def test_session_create_and_list_persist_delivery_fields(
     assert saved["id"] == Path(created["path"]).stem
     assert saved["id"] != 0
     assert Path(created["path"]).name != "multi_day_ethics.json"
+
+
+def test_prune_sessions_removes_old_files(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("src.backends.main.SESSIONS_DIR", tmp_path)
+    request = _SessionRequest(
+        title="Old Session",
+        date="2026-01-01",
+        instructor="Dr. Test",
+        ce_credits=3,
+        ce_types="APA",
+        start_time="09:00",
+        end_time="12:00",
+    )
+    created = asyncio.run(create_session(request))
+    session_file = Path(created["path"])
+    assert session_file.is_file()
+
+    # Backdate mtime to 31 days ago
+    old_time = (datetime.now(tz=UTC) - timedelta(days=31)).timestamp()
+    os.utime(session_file, (old_time, old_time))
+
+    sessions = asyncio.run(list_sessions())
+    assert len(sessions) == 0
+    assert not session_file.exists()
+
+
+def test_prune_sessions_keeps_recent_files(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("src.backends.main.SESSIONS_DIR", tmp_path)
+    request = _SessionRequest(
+        title="Recent Session",
+        date="2026-01-01",
+        instructor="Dr. Test",
+        ce_credits=3,
+        ce_types="APA",
+        start_time="09:00",
+        end_time="12:00",
+    )
+    created = asyncio.run(create_session(request))
+    session_file = Path(created["path"])
+
+    # Create an old session in the same dir
+    old_request = _SessionRequest(
+        title="Old Session",
+        date="2026-01-01",
+        instructor="Dr. Test",
+        ce_credits=3,
+        ce_types="APA",
+        start_time="09:00",
+        end_time="12:00",
+    )
+    old_created = asyncio.run(create_session(old_request))
+    old_file = Path(old_created["path"])
+    old_time = (datetime.now(tz=UTC) - timedelta(days=31)).timestamp()
+    os.utime(old_file, (old_time, old_time))
+
+    sessions = asyncio.run(list_sessions())
+    assert len(sessions) == 1
+    assert sessions[0]["title"] == "Recent Session"
+    assert not old_file.exists()
+    assert session_file.is_file()
