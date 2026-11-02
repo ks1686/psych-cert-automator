@@ -104,18 +104,6 @@ def _same_identity(older: _Identity, newer: _Identity) -> bool:
     return old_tokens <= new_tokens or new_tokens <= old_tokens
 
 
-def _same_person_and_type(older: CERequest, newer: CERequest) -> bool:
-    """True when two requests are the same person asking for the same CE type.
-
-    Names must match and emails must not conflict. Normalized names that are
-    equal match when at least one email is missing or both are equal. A name
-    that only adds or drops a word ("Ann M. Lee" vs "Ann Lee") matches only
-    when both rows carry the same email. A shared email alone (a family
-    address) never makes two different names one person.
-    """
-    return _same_identity(_identity(older), _identity(newer))
-
-
 def _submitted_sort_key(request: CERequest) -> float:
     """Sortable submission time; untimed requests sort first (see caller)."""
     return request.submitted_at.timestamp() if request.submitted_at else 0.0
@@ -182,7 +170,7 @@ def split_duplicates(
 ) -> tuple[list[CERequest], list[CERequest]]:
     """Split survey rows into the ones to use and older duplicates.
 
-    Two requests belong together when ``_same_person_and_type`` links them,
+    Two requests belong together when ``_same_identity`` links them,
     directly or through a renamed row. A group is never formed across
     conflicting non-empty emails, so two respondents who share a name stay
     separate. The kept row is the latest one in each group; every other row
