@@ -1,0 +1,61 @@
+#!/usr/bin/env bash
+# Drive Psych Cert Gen for verification. Works from any working directory.
+set -euo pipefail
+BIN_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+# shellcheck source=lib.sh
+. "$BIN_DIR/lib.sh"
+
+usage() {
+  cat <<EOF
+usage: verify-psych-cert-gen launch
+       verify-psych-cert-gen doctor --id RUN_ID
+       verify-psych-cert-gen drive --id RUN_ID FEATURE
+       verify-psych-cert-gen browser --id RUN_ID -- OP ARG...
+       verify-psych-cert-gen cleanup --id RUN_ID [--abandon]
+       verify-psych-cert-gen run -- COMMAND...
+       verify-psych-cert-gen copy-sandbox SRC DEST
+EOF
+}
+
+main() {
+  local cmd rc
+  cmd=${1:-}
+  if [ -z "$cmd" ]; then
+    usage >&2
+    return 2
+  fi
+  shift
+  case "$cmd" in
+    launch)
+      cmd_launch "$@"
+      ;;
+    doctor)
+      cmd_doctor "$@"
+      ;;
+    drive)
+      cmd_drive "$@"
+      ;;
+    browser)
+      cmd_browser "$@"
+      ;;
+    cleanup)
+      cmd_cleanup "$@"
+      ;;
+    run)
+      cmd_run "$@"
+      ;;
+    copy-sandbox)
+      cmd_copy_sandbox "$@"
+      ;;
+    *)
+      usage >&2
+      return 2
+      ;;
+  esac
+}
+
+set +e
+main "$@"
+rc=$?
+set -e
+exit "$rc"
