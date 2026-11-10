@@ -153,19 +153,34 @@ check_tool_path_not_from_state() {
   printf '%s\n' "$out" | grep '^NPM_CONFIG_CACHE=.' >/dev/null
 }
 
+expect_rc() {
+  local want rc
+  want=$1
+  shift
+  set +e
+  "$@" >/dev/null 2>&1
+  rc=$?
+  set -e
+  [ "$rc" -eq "$want" ]
+}
+
 check_run_ids() {
   local id other
-  assert_fail python3 "$HARNESS" valid-id .
-  assert_fail python3 "$HARNESS" valid-id ..
-  assert_fail python3 "$HARNESS" valid-id ../x
-  assert_fail python3 "$HARNESS" valid-id 'a/b'
-  assert_fail python3 "$HARNESS" valid-id 'has space'
-  assert_fail python3 "$HARNESS" valid-id ''
+  expect_rc 2 python3 "$HARNESS" valid-id .
+  expect_rc 2 python3 "$HARNESS" valid-id ..
+  expect_rc 2 python3 "$HARNESS" valid-id ../x
+  expect_rc 2 python3 "$HARNESS" valid-id 'a/b'
+  expect_rc 2 python3 "$HARNESS" valid-id 'has space'
+  expect_rc 2 python3 "$HARNESS" valid-id ''
   python3 "$HARNESS" valid-id 'ok-id_1'
   id=$(python3 "$HARNESS" make-run-id) || return 1
   other=$(python3 "$HARNESS" make-run-id) || return 1
   [ "$id" != "$other" ]
   python3 "$HARNESS" valid-id "$id"
+  expect_rc 2 "$VERIFY" doctor --id .
+  expect_rc 2 "$VERIFY" doctor --id ..
+  expect_rc 2 "$VERIFY" cleanup --id ../x
+  expect_rc 2 "$VERIFY" drive --id . generate-certificates
 }
 
 check_cleanup_requires_id() {
@@ -513,6 +528,55 @@ check_static_guards() {
   empty_array_ok
 }
 
+check_dest_guards() {
+  local outside escaped evid
+  create_run
+  outside="$SCRATCH/outside"
+  mkdir -p "$outside"
+  escaped="$STATE_DIR/tmp/../../../outside/escaped.png"
+  assert_fail node "$BIN_DIR/browser-server.mjs" --guard-write "$STATE_DIR" "$escaped"
+  [ ! -e "$SCRATCH/outside/escaped.png" ]
+  assert_fail node "$BIN_DIR/browser-server.mjs" --guard-write "$STATE_DIR" "$STATE_DIR/tmp/../escaped-in-state.png"
+  [ ! -e "$STATE_DIR/escaped-in-state.png" ]
+  ln -s "$outside/via-link.png" "$STATE_DIR/tmp/via-link.png"
+  assert_fail node "$BIN_DIR/browser-server.mjs" --guard-write "$STATE_DIR" "$STATE_DIR/tmp/via-link.png"
+  [ ! -e "$outside/via-link.png" ]
+  ln -s "$outside" "$STATE_DIR/tmp/linked-dir"
+  assert_fail node "$BIN_DIR/browser-server.mjs" --guard-write "$STATE_DIR" "$STATE_DIR/tmp/linked-dir/file.png"
+  [ ! -e "$outside/file.png" ]
+  ln -s "$outside/dangling.png" "$STATE_DIR/tmp/dangling.png"
+  assert_fail node "$BIN_DIR/browser-server.mjs" --guard-write "$STATE_DIR" "$STATE_DIR/tmp/dangling.png"
+  [ ! -e "$outside/dangling.png" ]
+  node "$BIN_DIR/browser-server.mjs" --guard-write "$STATE_DIR" "$STATE_DIR/tmp/kept.png"
+  [ -f "$STATE_DIR/tmp/kept.png" ]
+  [ ! -e "$outside/kept.png" ]
+  evid=$(python3 "$HARNESS" evidence-dir "$STATE_DIR") || return 1
+  node "$BIN_DIR/browser-server.mjs" --guard-write "$STATE_DIR" "$evid/kept.txt"
+  [ -f "$evid/kept.txt" ]
+  if grep -n 'startsWith(`${state}' "$BIN_DIR/browser-server.mjs" || grep -n 'startsWith(state' "$BIN_DIR/browser-server.mjs"; then
+    return 1
+  fi
+}
+
+check_leftover_docx() {
+  local out rc ninth
+  create_run
+  "$VERIFY" drive --id "$RUN_ID" cli-batch || return 1
+  printf 'leftover\n' >"$STATE_DIR/output/cli/Leftover_Chen.docx"
+  set +e
+  out=$(python3 "$HARNESS" prove-pdfs "$STATE_DIR/output/cli" 0 "$STATE_DIR" 2>&1)
+  rc=$?
+  set -e
+  [ "$rc" -ne 0 ]
+  printf '%s\n' "$out" | grep -F 'Leftover_Chen.docx' >/dev/null
+  rm -f "$STATE_DIR/output/cli/Leftover_Chen.docx"
+  ninth=$(find "$STATE_DIR/output/cli" -name '*.pdf' -type f | sed -n '1p')
+  [ -n "$ninth" ]
+  cp "$ninth" "$STATE_DIR/output/cli/Ninth.pdf"
+  assert_fail python3 "$HARNESS" prove-pdfs "$STATE_DIR/output/cli" 0 "$STATE_DIR"
+  rm -f "$STATE_DIR/output/cli/Ninth.pdf"
+}
+
 check_no_residue() {
   local after
   after=$(git -C "$REPO" status --porcelain)
@@ -545,6 +609,8 @@ check check_url_and_names
 check check_exit_codes
 check check_substitution_propagates
 check check_static_guards
+check check_dest_guards
+check check_leftover_docx
 check check_no_residue
 
 if [ "$FAIL" -ne 0 ]; then

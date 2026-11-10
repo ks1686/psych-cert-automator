@@ -7,7 +7,7 @@ The primary surface is the four-step certificate wizard. The same screens run in
 ## Baseline preconditions
 
 - `uv sync` and `bun install` have been run in the repo.
-- `node`, `pdftotext`, and Google Chrome or Chromium are on `PATH`.
+- `node`, `pdftotext`, and Google Chrome are on `PATH`. The wizard browser launches with Playwright `channel: "chrome"`.
 - `PSYCH_CERT_TOKEN` is unset.
 - Ports `8008` and `1420` are free. One verification run owns both. Launch refuses a second copy.
 - Fixture workbooks only: `tests/fixtures/pilot_zoom.xlsx` and `tests/fixtures/pilot_qualtrics.xlsx`.

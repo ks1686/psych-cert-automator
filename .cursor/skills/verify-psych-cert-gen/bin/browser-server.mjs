@@ -1,7 +1,46 @@
 import { createRequire } from "node:module";
+import { spawnSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
 import fs from "node:fs";
 import net from "node:net";
 import path from "node:path";
+
+const scriptDir = path.dirname(fileURLToPath(import.meta.url));
+
+function guardDest(stateDir, dest) {
+  const proc = spawnSync(
+    "python3",
+    [path.join(scriptDir, "harness.py"), "guard-dest", stateDir, dest],
+    { encoding: "utf8" },
+  );
+  if (proc.error) {
+    throw new Error(proc.error.message);
+  }
+  if (proc.status !== 0) {
+    throw new Error((proc.stderr || "destination refused").trim());
+  }
+  const resolved = (proc.stdout || "").trim();
+  if (!resolved.startsWith("/")) {
+    throw new Error("destination guard returned a relative path");
+  }
+  return resolved;
+}
+
+const guardOp = process.argv[2];
+if (guardOp === "--guard-dest" || guardOp === "--guard-write") {
+  try {
+    const resolved = guardDest(process.argv[3], process.argv[4]);
+    if (guardOp === "--guard-write") {
+      fs.writeFileSync(resolved, "ok\n", { mode: 0o600, flag: "wx" });
+    }
+    process.stdout.write(`${resolved}\n`);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    process.stderr.write(`${message}\n`);
+    process.exit(1);
+  }
+  process.exit(0);
+}
 
 const state = process.env.PSYCH_CERT_STATE;
 const repo = process.env.PSYCH_CERT_REPO;
@@ -123,22 +162,18 @@ async function handle(message) {
     const height = Number(args[1]);
     const dest = args[2];
     const full = args[3] === "full";
-    if (!dest.startsWith(`${state}${path.sep}`)) {
-      throw new Error("screenshot path escapes the state dir");
-    }
+    const resolved = guardDest(state, dest);
     await page.setViewportSize({ width, height });
     await page.evaluate(() => window.scrollTo(0, 0));
-    await page.screenshot({ path: dest, fullPage: full });
-    await fs.promises.chmod(dest, 0o600);
+    await page.screenshot({ path: resolved, fullPage: full });
+    await fs.promises.chmod(resolved, 0o600);
     return { ok: true };
   }
   if (op === "aria") {
     const dest = args[0];
-    if (!dest.startsWith(`${state}${path.sep}`)) {
-      throw new Error("aria path escapes the state dir");
-    }
+    const resolved = guardDest(state, dest);
     const text = await page.locator("main").ariaSnapshot();
-    await fs.promises.writeFile(dest, text, { mode: 0o600 });
+    await fs.promises.writeFile(resolved, text, { mode: 0o600 });
     return { ok: true };
   }
   if (op === "scan-side-effects") {
@@ -150,14 +185,12 @@ async function handle(message) {
   }
   if (op === "download-zip") {
     const dest = args[0];
-    if (!dest.startsWith(`${state}${path.sep}`)) {
-      throw new Error("download path escapes the state dir");
-    }
+    const resolved = guardDest(state, dest);
     const downloadPromise = page.waitForEvent("download");
     await page.getByRole("button", { name: "Download All as ZIP", exact: true }).click();
     const download = await downloadPromise;
-    await download.saveAs(dest);
-    await fs.promises.chmod(dest, 0o600);
+    await download.saveAs(resolved);
+    await fs.promises.chmod(resolved, 0o600);
     return { ok: true };
   }
   throw new Error(`unknown op ${op}`);

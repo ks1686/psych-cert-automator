@@ -670,6 +670,81 @@ def evidence_dir(state: str) -> str:
     return evidence
 
 
+def _strict_ancestor(ancestor: str, descendant: str) -> bool:
+    ancestor = ancestor.rstrip("/") or "/"
+    descendant = descendant.rstrip("/") or "/"
+    if ancestor == "/":
+        return descendant != "/"
+    return descendant.startswith(ancestor + "/")
+
+
+def _inside(path: str, root: str) -> bool:
+    root = root.rstrip("/") or "/"
+    path = path.rstrip("/") or "/"
+    return path == root or path.startswith(root + "/")
+
+
+def _realpath_dir(path: str) -> str:
+    if os.path.islink(path):
+        die(f"refusing symlink: {path}")
+    if not os.path.isdir(path):
+        die(f"not a directory: {path}")
+    return os.path.realpath(path)
+
+
+def guard_dest(state: str, dest: str) -> str:
+    """Resolve a file a tool is about to write.
+
+    Rejects ``..`` and ``.`` segments before realpath. A symlink is allowed
+    only when it is a strict ancestor of this run's state or evidence
+    directory (for example ``/tmp`` on macOS). Every other symlink is refused.
+    A missing final component is resolved from its real parent. The result
+    must sit inside the state directory or the evidence directory.
+    """
+    if not dest or "\x00" in dest or "\n" in dest:
+        die("refusing destination")
+    if not dest.startswith("/"):
+        die("refusing relative destination")
+    parts = dest.split("/")[1:]
+    if any(part in ("", ".", "..") for part in parts):
+        die("refusing . or .. in destination")
+    state_real = _realpath_dir(state)
+    evidence_real = _realpath_dir(evidence_dir(state))
+    roots = (state_real, evidence_real)
+    literal = "/"
+    resolved = ""
+    for index, part in enumerate(parts):
+        literal = "/" + part if literal == "/" else literal + "/" + part
+        last = index == len(parts) - 1
+        if os.path.islink(literal):
+            link_real = os.path.realpath(literal)
+            if any(_strict_ancestor(link_real, root) for root in roots):
+                continue
+            die(f"refusing symlink: {literal}")
+        if last and not os.path.lexists(literal):
+            parent = os.path.dirname(literal)
+            if os.path.islink(parent) or not os.path.isdir(parent):
+                die("destination parent is not a real directory")
+            parent_real = os.path.realpath(parent)
+            if not any(_inside(parent_real, root) for root in roots):
+                die("destination escapes the run")
+            resolved = parent_real + "/" + part
+            break
+        if not os.path.exists(literal):
+            die("destination parent is missing")
+    if not resolved:
+        if os.path.islink(literal):
+            die(f"refusing symlink: {literal}")
+        resolved = os.path.realpath(literal)
+    if not any(_inside(resolved, root) for root in roots):
+        die("destination escapes the run")
+    if resolved in roots:
+        die("refusing to write the directory itself")
+    if os.path.dirname(resolved) == state_real and os.path.basename(resolved) in HELPER_NAMES:
+        die(f"refusing helper file: {os.path.basename(resolved)}")
+    return resolved
+
+
 def capture_destination(state: str, name: str) -> tuple[str, str]:
     if name in (".", "..") or name in HELPER_NAMES or not CAPTURE_NAME.fullmatch(name):
         die(f"refusing capture name: {name}")
@@ -1052,12 +1127,23 @@ def versions_agree(repo: str) -> str:
 
 def prove_pdfs(output: str, epoch_ns: int, evidence_state: str) -> None:
     files = new_since(output, epoch_ns)
-    pdfs = [path for path in files if path.lower().endswith(".pdf")]
-    report = os.path.join(output, "ineligibility_report.xlsx")
-    if len(pdfs) < 8:
-        die(f"expected at least 8 new PDFs, found {len(pdfs)}: {files}")
-    if not os.path.isfile(report):
-        die("ineligibility_report.xlsx was not written")
+    pdfs: list[str] = []
+    reports: list[str] = []
+    unexpected: list[str] = []
+    for path in files:
+        name = os.path.basename(path)
+        if name.lower().endswith(".pdf"):
+            pdfs.append(path)
+        elif name == "ineligibility_report.xlsx":
+            reports.append(path)
+        else:
+            unexpected.append(path)
+    if unexpected:
+        die("unexpected output files: " + ", ".join(unexpected))
+    if len(pdfs) != 8:
+        die(f"expected exactly 8 new PDFs, found {len(pdfs)}: {pdfs}")
+    if len(reports) != 1:
+        die("expected exactly one ineligibility_report.xlsx")
     pdftotext = find_exe("pdftotext")
     chunks: list[str] = []
     for pdf in pdfs:
@@ -1225,6 +1311,9 @@ def main(argv: list[str]) -> int:
         return 0
     if command == "guard":
         require_inside(args[0], args[1])
+        return 0
+    if command == "guard-dest":
+        sys.stdout.write(guard_dest(args[0], args[1]) + "\n")
         return 0
     if command == "registry":
         sys.stdout.write(registry_path() + "\n")

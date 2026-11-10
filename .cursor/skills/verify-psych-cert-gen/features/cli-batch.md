@@ -38,11 +38,11 @@ Preconditions:
 Packaged check: `verify-psych-cert-gen drive --id RUN_ID cli-batch`.
 
 - **Run the command.** The drive executes the argument list above with `--output-dir` set to the run's `output/cli` directory, under the isolated home. The process exits 0.
-- **Read the PDFs.** The drive checks the new PDFs the same way as generate: at least 8 PDFs, `ineligibility_report.xlsx`, and folded text containing `Avery Chen`, `October 6, 2026`, `Amira Solano`, the training title, and `CE CREDITS: 3` or `CE CREDIT HOURS: 3`. `Morgan Hale` is absent.
+- **Read the PDFs.** The drive checks the new files the same way as generate: exactly 8 PDFs, one `ineligibility_report.xlsx`, and no other new file. Folded text contains `Avery Chen`, `October 6, 2026`, `Amira Solano`, the training title, and `CE CREDITS: 3` or `CE CREDIT HOURS: 3`. `Morgan Hale` is absent.
 
 ## Gotchas
 
 - `--in-person` requires `--location`. The packaged drive leaves the default, which is virtual.
 - `--include-host` would print a certificate for Morgan Hale and fail this proof.
-- The CLI writes `.docx` files when PDF conversion fails. The drive treats that as a failure.
+- The CLI writes `.docx` files when PDF conversion fails. `prove-pdfs` fails when any new `.docx` or any other unexpected file is present, and when the PDF count is not exactly 8.
 - Run the CLI through the helper so the child home is the run's isolated home. A hand-run from a normal terminal writes session data under the real `~/.psych-cert-gen` if the command is pointed at a path that stores sessions there. `certgen.py` itself writes certificates only to `--output-dir`.

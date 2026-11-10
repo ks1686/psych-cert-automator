@@ -84,8 +84,10 @@ create_run() {
 }
 
 use_id() {
+  local resolved
   RUN_ID=$1
-  STATE_DIR=$(python3 "$HARNESS" resolve-run "$RUN_ID") || return 1
+  resolved=$(python3 "$HARNESS" resolve-run "$RUN_ID") || return $?
+  STATE_DIR=$resolved
   REPO=$(discover_repo) || return 1
 }
 
@@ -346,7 +348,7 @@ cmd_doctor() {
     echo "doctor requires --id" >&2
     return 2
   fi
-  use_id "$id" || return 1
+  use_id "$id" || return $?
   python3 "$HARNESS" doctor "$STATE_DIR" "$REPO" || return 1
 }
 
@@ -374,7 +376,7 @@ cmd_cleanup() {
     echo "cleanup requires --id and does not guess one" >&2
     return 2
   fi
-  use_id "$id" || return 1
+  use_id "$id" || return $?
   prefs_bad=0
   if ! compare_before_state; then
     prefs_bad=1
@@ -444,7 +446,7 @@ cmd_browser() {
     echo "browser requires --id" >&2
     return 2
   fi
-  use_id "$id" || return 1
+  use_id "$id" || return $?
   python3 "$HARNESS" rpc "$STATE_DIR/browser.sock" "$@" || return 1
 }
 
@@ -593,7 +595,7 @@ cmd_drive() {
     echo "usage: drive --id RUN_ID FEATURE" >&2
     return 2
   fi
-  use_id "$id" || return 1
+  use_id "$id" || return $?
   case "$feature" in
     generate-certificates)
       drive_generate

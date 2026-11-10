@@ -23,7 +23,7 @@ Preconditions, from the repo root, once per machine:
 
 - `uv sync` so `.venv/bin/python` exists
 - `bun install` so Vite and Playwright can start
-- `node`, `pdftotext`, and Google Chrome or Chromium on `PATH`
+- `node`, `pdftotext`, and Google Chrome on `PATH`. The wizard browser is Playwright with `channel: "chrome"`. Chromium does not satisfy that launch.
 - ports `8008` and `1420` free
 
 Leave `PSYCH_CERT_TOKEN` unset. A token makes the browser UI receive 401, because the dev client sends a token only inside the Tauri shell.
@@ -39,7 +39,7 @@ What launch starts, in order:
 1. A private state directory (`mktemp`, mode `0700`) with an isolated `HOME` and `TMPDIR`. The real home is not the process home.
 2. The API as `"$REPO/.venv/bin/python" src/backends/main.py` with `PSYCH_CERT_PORT=8008`. The supervised pid is the API process. `/health` must report that same pid.
 3. Vite: `VITE_E2E=1 bun run dev -- --host 127.0.0.1 --port 1420`.
-4. A headless Chrome driven by Playwright (`channel: chrome`).
+4. Headless Google Chrome driven by Playwright with `channel: "chrome"`.
 5. A navigation to `http://127.0.0.1:1420/` and a wait until the heading `Training Metadata` is visible.
 
 Ready means that heading. The startup screen can already show a healthy backend for about 1.5 seconds before the wizard mounts. A passing `/health` is not ready.
@@ -83,7 +83,7 @@ Allowed browser ops are `goto`, `expect-url`, `wait-heading`, `click-role`, `fil
 
 `seed-paths` writes `window.__E2E_PATHS__` before the Select buttons. That is the same seam `VITE_E2E=1` already uses in the repo's Playwright tests. The buttons that follow are the real wizard buttons.
 
-The generate journey fills the metadata form, selects the two fixture workbooks, parses, reviews matches, previews, chooses an empty output folder, generates, and then reads the PDF bytes with `pdftotext -layout`. A `.docx` left behind because conversion failed is a failed journey. The folded PDF text must contain `Avery Chen`, `October 6, 2026`, `Amira Solano`, the training title, and either `CE CREDITS: 3` or `CE CREDIT HOURS: 3`. It must not contain the host name `Morgan Hale`.
+The generate journey fills the metadata form, selects the two fixture workbooks, parses, reviews matches, previews, chooses an empty output folder, generates, and then reads the PDF bytes with `pdftotext -layout`. The output proof requires exactly 8 new PDFs and one `ineligibility_report.xlsx`. Any other new file, including a `.docx` from a failed conversion, fails the journey. The folded PDF text must contain `Avery Chen`, `October 6, 2026`, `Amira Solano`, the training title, and either `CE CREDITS: 3` or `CE CREDIT HOURS: 3`. It must not contain the host name `Morgan Hale`.
 
 Do not click `Open output folder`. Do not click `Save Session`. Both would reach outside the isolated home or the stubbed opener.
 
@@ -145,7 +145,7 @@ Guards the helpers enforce, and that `regress.sh` fails on if they regress:
 - Hash and snapshot walks fail when any entry is unreadable. Path checks use the whole real path, so `/tmp/a/../../etc/passwd` is outside `/tmp`. An unsupported `uname` exits before any directory is created.
 - `run -- COMMAND` returns that command's status. `run -- false` exits 1.
 - A process group is signaled only after the live group id is read, not from a stored group id.
-- The real `~/.psych-cert-gen` tree is snapshotted before launch and compared again during cleanup, by full path. On macOS the comparison also includes the app preference plists by full path.
+- The real `~/.psych-cert-gen` tree is snapshotted before launch and compared again during cleanup, by full path. On macOS the comparison also includes `~/Library/Preferences/edu.rutgers.gsapp.psych-cert-gen.plist` and `~/Library/Preferences/com.apple.LaunchServices/com.apple.launchservices.secure.plist`, each by full path.
 
 ```bash
 "$HELPER" run -- pdftotext -layout path/to/certificate.pdf -
@@ -163,6 +163,7 @@ These stay unverified until a run on that platform does them. The skill's comman
 - The native file dialog. `VITE_E2E=1` uses the repo's dialog stub, which is the production boundary for that plugin during browser runs.
 - The `Open output folder` button. The opener plugin is stubbed and the drive does not click it.
 - A real macOS preferences database. The Darwin home check in `regress.sh` sets `CFFIXED_USER_HOME` and compares a fixture plist path; it does not launch the `.app`.
+- First Mac check: cleanup also snapshots `com.apple.launchservices.secure.plist`. Launch Services is a system database, and another app can rewrite it during a run. On a Mac, confirm a quiet run still prints `cleaned`, and that a change to that plist keeps state and does not print `cleaned`. This Linux run cannot prove that file.
 
 ## Maintenance
 
