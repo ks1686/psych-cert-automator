@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import math
 from datetime import date, time
-from pathlib import Path
+from typing import TYPE_CHECKING
 
+import certgen
 import pytest
 from click.testing import CliRunner
 from pydantic import ValidationError
@@ -15,7 +16,8 @@ from src.generator.templates import TemplateRenderContext, build_replacements
 from src.models.credits import format_ce_credits, parse_ce_credits
 from src.models.training import TrainingConfigError, TrainingMetadata
 
-import certgen
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 @pytest.mark.parametrize(
@@ -32,12 +34,12 @@ def test_invalid_credits_are_rejected(bad: object) -> None:
         parse_ce_credits(bad)
 
 
-def _ctx(credits: float) -> TemplateRenderContext:
+def _ctx(credit_amount: float) -> TemplateRenderContext:
     return TemplateRenderContext(
         full_name="Ada Lovelace",
         training_title="Ethics",
         instructor_name="Dr. Grace Hopper",
-        ce_credits=credits,
+        ce_credits=credit_amount,
         license_number=None,
         date_display="November 2, 2026",
         time_display="9:00 AM - 12:00 PM",
@@ -83,14 +85,14 @@ def test_training_metadata_rejects_off_step_credits() -> None:
         )
 
 
-def _generate_body(credits: object) -> dict[str, object]:
+def _generate_body(credit_amount: object) -> dict[str, object]:
     return {
         "zoom_path": "z.xlsx",
         "qualtrics_path": "q.xlsx",
         "title": "Ethics",
         "training_date": date(2026, 11, 2),
         "instructor": "Dr. Grace Hopper",
-        "ce_credits": credits,
+        "ce_credits": credit_amount,
         "ce_types": ["APA"],
         "start_time": time(9),
         "end_time": time(12),

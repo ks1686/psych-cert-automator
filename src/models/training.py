@@ -186,7 +186,11 @@ class TrainingMetadata(BaseModel):
 
         is_virtual = config.get("is_virtual", True)
         location_raw = config.get("location")
-        location = location_raw.strip() if isinstance(location_raw, str) and location_raw.strip() else None
+        location = (
+            location_raw.strip()
+            if isinstance(location_raw, str) and location_raw.strip()
+            else None
+        )
         if not is_virtual and not location:
             raise TrainingConfigError(
                 field="location",

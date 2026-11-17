@@ -88,7 +88,9 @@ def test_match_uses_entered_session_times(early_host_files: tuple[Path, Path]) -
     assert entry.attendance["early_leave"] == 0.0
 
 
-def test_entered_times_still_reject_a_real_late_join(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_entered_times_still_reject_a_real_late_join(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     zoom = write_zoom(
         tmp_path / "zoom.xlsx",
         [seg("Lou Late", "lou@example.test", at(9, 20), at(12, 0))],

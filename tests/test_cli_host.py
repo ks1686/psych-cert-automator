@@ -4,11 +4,11 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-import pytest
-import src.pipeline as pipeline
-from click.testing import CliRunner
-
 import certgen
+import pytest
+from click.testing import CliRunner
+from src import pipeline
+
 from tests.synthetic import at, seg, write_qualtrics, write_zoom
 
 if TYPE_CHECKING:

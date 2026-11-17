@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import date, time
 from typing import TYPE_CHECKING
 
-import src.pipeline as pipeline
+from src import pipeline
 from src.models.certificate import EligibilityStatus
 from src.parser.zoom import parse_zoom_attendance
 from src.pipeline import run_pipeline
@@ -54,7 +54,9 @@ def test_a_chris_who_left_early_is_not_credited_with_the_other_chris(
         [("Chris Park", "Chris.P2@example.test", APA, None)],
     )
     monkeypatch.setattr(
-        pipeline, "generate_all", lambda outputs, _d, **_k: [f"{i}.pdf" for i in range(len(outputs))]
+        pipeline,
+        "generate_all",
+        lambda outputs, _d, **_k: [f"{i}.pdf" for i in range(len(outputs))],
     )
     result = run_pipeline(
         str(_zoom(tmp_path)), str(qualtrics), "T", date(2026, 11, 2), "P", 3,

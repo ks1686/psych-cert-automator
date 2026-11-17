@@ -32,7 +32,9 @@ ZoomRow = tuple[str, str | None, datetime, datetime, str]
 
 def at(hour: int, minute: int, day: int = 2) -> datetime:
     """Return a datetime on the synthetic meeting day (Nov 2026)."""
-    return datetime(2026, 11, day, hour, minute)
+    # Zoom exports are naive local timestamps. A tzinfo would change the values
+    # these tests compare against parsed spreadsheet cells.
+    return datetime(2026, 11, day, hour, minute)  # noqa: DTZ001
 
 
 def seg(
@@ -61,7 +63,17 @@ def write_zoom(
     assert ws is not None
     if extra_top_row:
         ws.append(["Zoom attendance report"])
-    ws.append(["Topic", "ID", "Host", "Duration (minutes)", "Start time", "End time", "Participants"])
+    ws.append(
+        [
+            "Topic",
+            "ID",
+            "Host",
+            "Duration (minutes)",
+            "Start time",
+            "End time",
+            "Participants",
+        ]
+    )
     ws.append(
         [
             "Synthetic CE Workshop",
@@ -185,10 +197,19 @@ def write_zoom_csv(
     for name, email, join, leave, waiting in rows:
         minutes = int((leave - join).total_seconds() // 60)
         lines.append(
-            f"{name},{email or ''},{join.strftime(fmt)},{leave.strftime(fmt)},{minutes},No,{waiting}"
+            f"{name},{email or ''},{join.strftime(fmt)},{leave.strftime(fmt)},"
+            f"{minutes},No,{waiting}"
         )
     path.write_text("\n".join(lines) + "\n", encoding="utf-8-sig")
     return path
+
+
+def _csv_cell(value: object) -> object:
+    if value is None:
+        return ""
+    if isinstance(value, datetime):
+        return value.strftime("%Y-%m-%d %H:%M:%S")
+    return value
 
 
 def write_qualtrics_csv(path: Path, rows: list[QualtricsRow]) -> Path:
@@ -202,8 +223,6 @@ def write_qualtrics_csv(path: Path, rows: list[QualtricsRow]) -> Path:
     with path.open("w", encoding="utf-8-sig", newline="") as handle:
         writer = csv.writer(handle)
         for row in ws.iter_rows(values_only=True):
-            writer.writerow(
-                ["" if v is None else (v.strftime("%Y-%m-%d %H:%M:%S") if isinstance(v, datetime) else v) for v in row]
-            )
+            writer.writerow([_csv_cell(v) for v in row])
     xlsx.unlink()
     return path

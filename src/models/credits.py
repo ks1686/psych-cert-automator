@@ -23,7 +23,7 @@ def parse_ce_credits(value: object) -> float:
     """
     if isinstance(value, bool):
         msg = "CE credits must be a number"
-        raise ValueError(msg)
+        raise ValueError(msg)  # noqa: TRY004  # pydantic and callers expect ValueError, not TypeError
     try:
         amount = Decimal(str(value).strip())
     except InvalidOperation:

@@ -7,8 +7,8 @@ from datetime import date, time
 from typing import TYPE_CHECKING
 
 import pytest
-import src.pipeline as pipeline
 from fastapi import HTTPException
+from src import pipeline
 from src.backends.routes import ParseRequest, parse_endpoint
 from src.parser.qualtrics import parse_qualtrics_export
 from src.parser.zoom import parse_zoom_attendance

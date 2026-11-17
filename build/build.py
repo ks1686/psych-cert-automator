@@ -62,7 +62,8 @@ def _detect_target_triple() -> str:
         if machine in ("aarch64", "arm64"):
             return "aarch64-unknown-linux-gnu"
 
-    raise SystemExit(f"Unsupported platform: {system} / {machine}")
+    message = f"Unsupported platform: {system} / {machine}"
+    raise SystemExit(message)
 
 
 def _is_windows(target_triple: str) -> bool:
@@ -86,7 +87,7 @@ def _validate_entry_point() -> None:
 def _check_pyinstaller() -> None:
     """Ensure PyInstaller is importable; install if missing."""
     try:
-        import PyInstaller  # noqa: F401
+        import PyInstaller  # noqa: F401, PLC0415  # probe: install only when missing
     except ImportError:
         print("[INFO] PyInstaller not found. Installing...")
         subprocess.check_call([sys.executable, "-m", "pip", "install", "pyinstaller"])
@@ -99,7 +100,7 @@ def _check_pyinstaller() -> None:
 def _run_pyinstaller() -> None:
     """Run PyInstaller with the project spec file."""
     print(f"[BUILD] Running PyInstaller with spec: {_SPEC_FILE}")
-    subprocess.check_call(
+    subprocess.check_call(  # noqa: S603  # executable is this interpreter; args are fixed
         [sys.executable, "-m", "PyInstaller", str(_SPEC_FILE)],
         cwd=str(_PROJECT_ROOT),
     )
@@ -110,10 +111,8 @@ def _find_binary() -> Path:
     binary_name = _BINARY_NAME + (".exe" if sys.platform == "win32" else "")
     binary_path = _DIST_DIR / binary_name
     if not binary_path.exists():
-        raise FileNotFoundError(
-            f"Binary not found at {binary_path}. "
-            "Check PyInstaller output for errors."
-        )
+        message = f"Binary not found at {binary_path}. Check PyInstaller output for errors."
+        raise FileNotFoundError(message)
     return binary_path
 
 
@@ -165,7 +164,7 @@ def main() -> None:
     final_path = _rename_and_place(binary_path, target_triple)
     print(f"[DONE] Binary ready: {final_path}")
     print(f"       Run: {final_path}")
-    print(f"       Then: curl http://localhost:8008/health")
+    print("       Then: curl http://localhost:8008/health")
 
 
 if __name__ == "__main__":

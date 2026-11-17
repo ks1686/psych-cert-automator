@@ -3,7 +3,8 @@ from datetime import date, datetime, time
 from pathlib import Path
 
 from src.pipeline import run_pipeline
-from tests.synthetic import write_zoom, write_qualtrics
+
+from tests.synthetic import write_qualtrics, write_zoom
 
 
 def _dt(year: int, month: int, day: int, hour: int, minute: int) -> datetime:
