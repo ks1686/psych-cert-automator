@@ -17,7 +17,7 @@ from src.generator.templates import (
     resolve_template_key,
     template_path_for,
 )
-from src.models.certificate import CertificateOutput
+from src.models.certificate import CertificateOutput, allocate_unique_basenames
 from src.models.training import CEType
 
 _W_NS = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
@@ -95,16 +95,14 @@ def test_output_filename_sanitizes_at_sign() -> None:
 
 
 def test_allocate_unique_basenames_disambiguates_same_last_name() -> None:
-    from src.models.certificate import allocate_unique_basenames
-
-    shared = dict(
-        ce_credits=3,
-        training_title="T",
-        training_date=date(2026, 3, 20),
-        instructor_name="Dr. Jane Smith",
-        license_number=None,
-        issue_date=date(2026, 3, 21),
-    )
+    shared = {
+        "ce_credits": 3,
+        "training_title": "T",
+        "training_date": date(2026, 3, 20),
+        "instructor_name": "Dr. Jane Smith",
+        "license_number": None,
+        "issue_date": date(2026, 3, 21),
+    }
     outputs = [
         CertificateOutput(full_name="Alice Jones", ce_type=CEType("APA"), **shared),
         CertificateOutput(full_name="Bob Jones", ce_type=CEType("APA"), **shared),
@@ -118,17 +116,15 @@ def test_allocate_unique_basenames_disambiguates_same_last_name() -> None:
 
 
 def test_allocate_unique_basenames_identical_full_names() -> None:
-    from src.models.certificate import allocate_unique_basenames
-
-    shared = dict(
-        ce_type=CEType("APA"),
-        ce_credits=3,
-        training_title="T",
-        training_date=date(2026, 3, 20),
-        instructor_name="Dr. Pat Lee",
-        license_number=None,
-        issue_date=date(2026, 3, 21),
-    )
+    shared = {
+        "ce_type": CEType("APA"),
+        "ce_credits": 3,
+        "training_title": "T",
+        "training_date": date(2026, 3, 20),
+        "instructor_name": "Dr. Pat Lee",
+        "license_number": None,
+        "issue_date": date(2026, 3, 21),
+    }
     outputs = [
         CertificateOutput(full_name="Sam Sam", **shared),
         CertificateOutput(full_name="Sam Sam", **shared),
@@ -263,7 +259,7 @@ def test_fill_nasp_preserves_inline_bold_and_strips_highlight(tmp_path: Path) ->
         ce_credits=3,
         license_number=None,
         date_display="March 20, 2026",
-        time_display="9:00 AM – 12:00 PM",  # noqa: RUF001
+        time_display="9:00 AM – 12:00 PM",
         is_virtual=True,
         location=None,
     )
@@ -299,7 +295,7 @@ def test_fill_nbcc_writes_program_date_and_credit_hours(tmp_path: Path) -> None:
         ce_credits=3,
         license_number=None,
         date_display="March 20, 2026",
-        time_display="9:00 AM – 12:00 PM",  # noqa: RUF001
+        time_display="9:00 AM – 12:00 PM",
         is_virtual=True,
         location=None,
     )

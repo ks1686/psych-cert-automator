@@ -3,6 +3,10 @@
 Golden PNGs are rendered with pdftoppm at a fixed DPI from dxpdf output.
 Regenerate them with UPDATE_CERTIFICATE_GOLDENS=1 after an intentional
 layout change.
+
+Rendering is skipped unless poppler and the pinned Ubuntu font files are
+installed. dxpdf 0.5.1 otherwise scans every font on the machine and can
+sit at 100% CPU for minutes per certificate.
 """
 
 from __future__ import annotations
@@ -11,6 +15,7 @@ import os
 import re
 import shutil
 import subprocess
+import time as stopwatch
 from dataclasses import dataclass
 from datetime import date, time
 from pathlib import Path
@@ -50,6 +55,18 @@ _PAGE_RE = re.compile(r'<page width="([^"]+)" height="([^"]+)"')
 
 _LANDSCAPE = frozenset({"apa", "ny", "nbcc"})
 _PORTRAIT = frozenset({"nasp", "attendance"})
+# Ubuntu packages fonts-croscore and fonts-noto-core. These files are what
+# the golden PNGs were rasterized with (poppler 24.02).
+_PINNED_FONTS = (
+    Path("/usr/share/fonts/truetype/croscore/Arimo-Regular.ttf"),
+    Path("/usr/share/fonts/truetype/croscore/Tinos-Regular.ttf"),
+    Path("/usr/share/fonts/truetype/noto/NotoSans-Regular.ttf"),
+)
+_LAYOUT_TOOLS = ("pdftotext", "pdftoppm", "pdfinfo", "pdffonts")
+_TOOL_TIMEOUT_SECONDS = 30
+# One APA certificate is about 3s here and a few seconds on GitHub runners.
+# dxpdf issue 188 is tens of seconds when the requested face is missing.
+_CONVERT_BUDGET_SECONDS = 20
 
 
 @dataclass(frozen=True, slots=True)
@@ -223,7 +240,48 @@ def _require_tool(name: str) -> str:
     return path
 
 
+def _require_layout_environment() -> None:
+    """Skip before dxpdf runs when this host cannot match the golden pin.
+
+    The Word templates ask for Arial, Californian FB, Calibri, Tahoma, and
+    Arial Unicode MS. Those faces are not installed here; fontconfig maps
+    them onto Arimo, Tinos, and Noto Sans. dxpdf 0.5.1 scans every font on
+    the machine when that mapping is missing, and one certificate can peg a
+    CPU for tens of seconds (https://github.com/nerdy-pro/dxpdf/issues/188).
+    The golden PNGs also require poppler 24.02.
+    """
+    missing_tools = [name for name in _LAYOUT_TOOLS if shutil.which(name) is None]
+    missing_fonts = [str(path) for path in _PINNED_FONTS if not path.is_file()]
+    if not missing_tools and not missing_fonts:
+        return
+    details: list[str] = []
+    if missing_tools:
+        details.append("poppler tools not on PATH: " + ", ".join(missing_tools))
+    if missing_fonts:
+        details.append("pinned font files not installed: " + ", ".join(missing_fonts))
+    pytest.skip(
+        "Certificate layout checks need poppler and the Ubuntu packages "
+        "fonts-croscore and fonts-noto-core. "
+        + " ".join(details)
+        + ". Without those faces dxpdf 0.5.1 scans the whole font catalog "
+        "and can sit at 100% CPU for minutes."
+    )
+
+
+def _run_tool(args: list[str]) -> subprocess.CompletedProcess[str]:
+    """Run a poppler tool. A stuck process fails after 30 seconds."""
+    return subprocess.run(  # noqa: S603
+        args,
+        check=True,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        timeout=_TOOL_TIMEOUT_SECONDS,
+    )
+
+
 def _render(case: _RenderCase, output_dir: Path) -> Path:
+    _require_layout_environment()
     certificate = CertificateOutput(
         full_name=case.full_name,
         ce_type=CEType(case.ce_type),
@@ -253,12 +311,8 @@ def _render(case: _RenderCase, output_dir: Path) -> Path:
 
 
 def _pdf_text(pdf: Path) -> str:
-    completed = subprocess.run(  # noqa: S603
+    completed = _run_tool(
         [_require_tool("pdftotext"), "-layout", "-enc", "UTF-8", str(pdf), "-"],
-        check=True,
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
     )
     return completed.stdout
 
@@ -266,12 +320,8 @@ def _pdf_text(pdf: Path) -> str:
 def _page_boxes(
     pdf: Path,
 ) -> list[tuple[float, float, list[tuple[float, float, float, float, str]]]]:
-    raw = subprocess.run(  # noqa: S603
+    raw = _run_tool(
         [_require_tool("pdftotext"), "-bbox-layout", str(pdf), "-"],
-        check=True,
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
     ).stdout
     pages: list[tuple[float, float, list[tuple[float, float, float, float, str]]]] = []
     for chunk in raw.split("<page ")[1:]:
@@ -287,7 +337,7 @@ def _page_boxes(
 
 def _render_png(pdf: Path, destination: Path) -> None:
     destination.parent.mkdir(parents=True, exist_ok=True)
-    subprocess.run(  # noqa: S603
+    _run_tool(
         [
             _require_tool("pdftoppm"),
             "-png",
@@ -297,8 +347,6 @@ def _render_png(pdf: Path, destination: Path) -> None:
             str(pdf),
             str(destination.with_suffix("")),
         ],
-        check=True,
-        capture_output=True,
     )
     assert destination.is_file()
 
@@ -322,13 +370,7 @@ def _pixel_diff_ratio(actual: Path, golden: Path) -> float:
 
 def _assert_layout(case: _RenderCase, pdf: Path) -> None:
     key = resolve_template_key(case.ce_type)
-    info = subprocess.run(  # noqa: S603
-        [_require_tool("pdfinfo"), str(pdf)],
-        check=True,
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-    ).stdout
+    info = _run_tool([_require_tool("pdfinfo"), str(pdf)]).stdout
     assert re.search(r"^Pages:\s+1$", info, re.MULTILINE), info
     text = _pdf_text(pdf)
     normalized = " ".join(text.split())
@@ -396,17 +438,46 @@ def _assert_no_overlap(words: list[tuple[float, float, float, float, str]]) -> N
 
 
 def _assert_fonts_embedded(pdf: Path) -> None:
-    listing = subprocess.run(  # noqa: S603
-        [_require_tool("pdffonts"), str(pdf)],
-        check=True,
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-    ).stdout
+    listing = _run_tool([_require_tool("pdffonts"), str(pdf)]).stdout
     rows = [line for line in listing.splitlines()[2:] if line.strip()]
     assert rows
     for line in rows:
         assert re.search(r"\byes\b", line), line
+
+
+@pytest.mark.timeout(30)
+def test_one_certificate_render_stays_under_the_font_scan_budget(tmp_path: Path) -> None:
+    """One certificate must finish quickly when the pinned fonts are present.
+
+    dxpdf 0.5.1 takes tens of seconds per file when it cannot find the
+    requested face and scans the host catalog. This runs before the
+    54-certificate workbook test so that regression fails in half a minute.
+    """
+    started = stopwatch.perf_counter()
+    _render(_CASES[0], tmp_path)
+    elapsed = stopwatch.perf_counter() - started
+    assert elapsed < _CONVERT_BUDGET_SECONDS, (
+        f"APA certificate took {elapsed:.1f}s. dxpdf is scanning the host font "
+        "catalog instead of the pinned faces."
+    )
+
+
+def test_missing_pinned_font_skips_before_dxpdf(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(
+        "tests.test_certificate_layout._PINNED_FONTS",
+        (Path("/no/such/pinned-font.ttf"),),
+    )
+
+    def _boom(*_args: object, **_kwargs: object) -> str:
+        message = "dxpdf ran without the pinned fonts"
+        raise AssertionError(message)
+
+    monkeypatch.setattr("tests.test_certificate_layout.generate_certificate", _boom)
+    with pytest.raises(pytest.skip.Exception, match="pinned font files"):
+        _render(_CASES[0], tmp_path)
 
 
 @pytest.mark.parametrize("case", _CASES, ids=[case.stem for case in _CASES])
@@ -427,7 +498,11 @@ def test_certificate_layout_and_golden(case: _RenderCase, tmp_path: Path) -> Non
     assert ratio <= _PIXEL_DIFF_LIMIT, f"{case.stem} pixel diff {ratio:.4%}"
 
 
+@pytest.mark.timeout(360)
 def test_v1_mock_workbook_covers_every_certificate_type(tmp_path: Path) -> None:
+    # 54 conversions. With the pinned fonts this is a couple of minutes;
+    # without them it used to peg a CPU until the run was killed.
+    _require_layout_environment()
     result = run_pipeline(
         zoom_path=str(_FIXTURES / "v1_zoom.xlsx"),
         qualtrics_path=str(_FIXTURES / "v1_qualtrics.xlsx"),
@@ -476,13 +551,7 @@ def test_v1_mock_workbook_covers_every_certificate_type(tmp_path: Path) -> None:
     renee = next(path for path in pdfs if "Amico" in path.name)
     assert "NY Psychology License" not in _pdf_text(renee)
     for path in pdfs:
-        info = subprocess.run(  # noqa: S603
-            [_require_tool("pdfinfo"), str(path)],
-            check=True,
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-        ).stdout
+        info = _run_tool([_require_tool("pdfinfo"), str(path)]).stdout
         assert re.search(r"^Pages:\s+1$", info, re.MULTILINE), path.name
         assert _PLACEHOLDER_RE.search(_pdf_text(path)) is None
 

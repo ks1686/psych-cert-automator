@@ -70,7 +70,7 @@ def _convert_with_libreoffice(docx_path: Path, pdf_path: Path) -> bool:
         return False
     out_dir = docx_path.parent
     try:
-        completed = subprocess.run(
+        completed = subprocess.run(  # noqa: S603  # soffice is a fixed candidate or PATH lookup
             [
                 soffice,
                 "--headless",
@@ -129,8 +129,8 @@ on run argv
 end run
 """
     try:
-        completed = subprocess.run(
-            ["osascript", "-e", script, str(docx_path), str(pdf_path)],
+        completed = subprocess.run(  # noqa: S603  # osascript is the macOS system binary
+            ["osascript", "-e", script, str(docx_path), str(pdf_path)],  # noqa: S607
             check=False,
             capture_output=True,
             text=True,

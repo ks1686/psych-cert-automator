@@ -7,11 +7,15 @@ or DATE must come out exactly as typed.
 
 from __future__ import annotations
 
-from pathlib import Path
+from typing import TYPE_CHECKING
 from zipfile import ZipFile
 
 import pytest
 from lxml import etree
+
+if TYPE_CHECKING:
+    from pathlib import Path
+
 from src.generator.templates import (
     TemplateKey,
     TemplateRenderContext,

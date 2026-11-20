@@ -95,7 +95,9 @@ def test_pipeline_issues_no_certificate_for_fuzzy_matches(
         ],
     )
     monkeypatch.setattr(
-        pipeline, "generate_all", lambda outputs, _d, **_k: [f"{i}.pdf" for i in range(len(outputs))]
+        pipeline,
+        "generate_all",
+        lambda outputs, _d, **_k: [f"{i}.pdf" for i in range(len(outputs))],
     )
     result = run_pipeline(
         str(zoom), str(qualtrics), "T", date(2026, 11, 2), "P", 3, ["APA"],

@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import date, time
 from typing import TYPE_CHECKING
 
-import src.pipeline as pipeline
+from src import pipeline
 from src.generator.certificate import certificate_warnings, pdf_page_count
 from src.models.certificate import CertificateOutput
 from src.models.training import CEType
@@ -64,13 +64,20 @@ def test_unsupported_script_is_flagged(tmp_path: Path) -> None:
     assert certificate_warnings(_output("Ada", title="Ethics – 第二部"), pdf)
 
 
-def test_pipeline_surfaces_render_warnings(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    zoom = write_zoom(tmp_path / "z.xlsx", [seg("王小明", "wang@example.test", at(9, 0), at(12, 0))])
+def test_pipeline_surfaces_render_warnings(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    zoom = write_zoom(
+        tmp_path / "z.xlsx",
+        [seg("王小明", "wang@example.test", at(9, 0), at(12, 0))],
+    )
     qualtrics = write_qualtrics(
         tmp_path / "q.xlsx", [("王小明", "wang@example.test", "Psychologist (APA)", None)],
     )
     monkeypatch.setattr(
-        pipeline, "generate_all", lambda outputs, _d, **_k: [f"{i}.pdf" for i in range(len(outputs))]
+        pipeline,
+        "generate_all",
+        lambda outputs, _d, **_k: [f"{i}.pdf" for i in range(len(outputs))],
     )
     result = run_pipeline(
         str(zoom), str(qualtrics), "T", date(2026, 11, 2), "P", 3, ["APA"],

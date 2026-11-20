@@ -5,14 +5,16 @@ from __future__ import annotations
 import re
 import sys
 from dataclasses import dataclass
-from datetime import date
 from pathlib import Path
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 from zipfile import ZIP_DEFLATED, ZipFile
 
 from lxml import etree
 
 from src.models.credits import format_ce_credits
+
+if TYPE_CHECKING:
+    from datetime import date
 
 TemplateKey = Literal["apa", "ny", "nasp", "nbcc", "attendance"]
 
@@ -100,7 +102,7 @@ def template_path_for(ce_type: str) -> Path:
 
 
 def format_training_date(start: date, end: date | None = None) -> str:
-    """Format a single date or inclusive start–end range for certificates."""
+    """Format one date, or a start and end range, for certificates."""
     if end is None or end == start:
         return f"{start:%B} {start.day}, {start.year}"
     if start.year == end.year and start.month == end.month:
@@ -125,7 +127,7 @@ def build_replacements(key: TemplateKey, ctx: TemplateRenderContext) -> dict[str
     title = ctx.training_title.strip()
     name = ctx.full_name.strip()
     instructor = ctx.instructor_name.strip()
-    credits = format_ce_credits(ctx.ce_credits)
+    credit_text = format_ce_credits(ctx.ce_credits)
     time_display = ctx.time_display.strip() or "—"
 
     if key == "apa":
@@ -133,7 +135,7 @@ def build_replacements(key: TemplateKey, ctx: TemplateRenderContext) -> dict[str
             "NAME": name,
             "TITLE": title,
             "COMPLETION DATE:": f"COMPLETION DATE: {ctx.date_display}",
-            "CE CREDITS:": f"CE CREDITS: {credits}",
+            "CE CREDITS:": f"CE CREDITS: {credit_text}",
             "LOCATION: Virtual Event": f"LOCATION: {location}",
             "FORMAT: Live Webinar": f"FORMAT: {fmt}",
         }
@@ -150,7 +152,7 @@ def build_replacements(key: TemplateKey, ctx: TemplateRenderContext) -> dict[str
             "TITLE": title,
             "INSTRUCTOR:": f"INSTRUCTOR: {instructor}",
             "COMPLETION DATE:": f"COMPLETION DATE: {ctx.date_display}",
-            "CE CREDITS:": f"CE CREDITS: {credits}",
+            "CE CREDITS:": f"CE CREDITS: {credit_text}",
             "LOCATION: Virtual Event": f"LOCATION: {location}",
             "FORMAT: Live Webinar": f"FORMAT: {fmt}",
         }
@@ -163,9 +165,9 @@ def build_replacements(key: TemplateKey, ctx: TemplateRenderContext) -> dict[str
             "NAME": name,
             "Program title": title,
             "Name, Degree": instructor,
-            "TIME – TIME ET": f"{time_display} ET",  # noqa: RUF001
+            "TIME – TIME ET": f"{time_display} ET",
             _NASP_DELIVERY_OPTIONS: delivery,
-            "X continuing education": f"{credits} continuing education",
+            "X continuing education": f"{credit_text} continuing education",
             "DATE": ctx.date_display,
         }
 
@@ -174,7 +176,7 @@ def build_replacements(key: TemplateKey, ctx: TemplateRenderContext) -> dict[str
             "NAME": name,
             "TITLE": title,
             "PROGRAM DATE:": f"PROGRAM DATE: {ctx.date_display}",
-            "CE CREDIT HOURS:": f"CE CREDIT HOURS: {credits}",
+            "CE CREDIT HOURS:": f"CE CREDIT HOURS: {credit_text}",
             "LOCATION:": f"LOCATION: {location}",
             "FORMAT:": f"FORMAT: {fmt}",
         }
