@@ -32,8 +32,10 @@ mcp-debug.log
 .omo/
 src-tauri/.omc/
 
-# Cursor local workspace state
-.cursor/
+# Cursor local workspace state. The verification skill under skills/ is tracked.
+.cursor/*
+!.cursor/skills/
+!.cursor/skills/**
 
 # Node / Frontend
 node_modules
