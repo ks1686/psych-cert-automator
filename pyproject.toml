@@ -45,6 +45,7 @@ reportPrivateUsage = "error"
 target-version = "py312"
 line-length = 100
 src = ["src", "tests"]
+extend-exclude = [".cursor/skills/verify-psych-cert-gen"]
 
 [tool.ruff.lint]
 # Certificate copy uses an en dash for date ranges, an em dash when a time

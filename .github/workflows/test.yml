@@ -36,6 +36,9 @@ jobs:
       - name: Install poppler and certificate fonts
         run: sudo apt-get update && sudo apt-get install -y poppler-utils fonts-croscore fonts-noto-core
 
+      - name: Ruff scope
+        run: uv run pytest tests/test_ruff_scope.py -q
+
       - name: Ruff
         run: uv run ruff check
 
